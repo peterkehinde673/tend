@@ -208,8 +208,8 @@ underlying observed-behavior statistics directly. Design:
 
 | Path | Status in this repo |
 |---|---|
-| `ring_real` (a genuine linked Ring account/device) | **Not implemented.** No OAuth, no webhook receiver, no real credentials anywhere in this codebase. |
-| `ring_playground` (Ring's official Developer Playground) | **Not implemented.** Whether Playground-simulated events reach an external webhook is still unverified against the live portal (see project history) — nothing here depends on that answer either way. |
+| `ring_real` (a genuine linked Ring account/device) | **Client, normalizer, webhook receiver, and `ring:check` are implemented and unit-tested — but no live call has ever succeeded.** See "Phase 2: what was actually verified" below. |
+| `ring_playground` (Ring's official Developer Playground) | **Not implemented as an event source.** Whether Playground-simulated events reach an external webhook remains genuinely UNKNOWN — see below; nothing here depends on that answer either way. |
 | `dev_simulator` | **Fully implemented.** `src/ingestion/simulator.ts` deterministically generates schema-accurate `TendEvent`s. This is a development/test tool, explicitly labeled as such everywhere it appears (code comments, CLI output, server startup banner, and the `source` field itself). |
 
 **This is not an official Ring simulator, and this project does not claim
@@ -217,6 +217,134 @@ Ring integration is working.** The `EventSource` interface
 (`src/ingestion/eventSource.ts`) exists specifically so a real
 `RingWebhookEventSource` or `RingPlaygroundEventSource` can be added later
 without touching the baseline, deviation, or reasoning layers at all.
+
+## Phase 2: Ring integration adapter
+
+`src/ingestion/ring/` implements the smallest genuine Ring integration
+boundary, built strictly against the `EventSource` interface established in
+Phase 1 — the core engine (baseline/deviation/reasoning/feedback) was not
+touched.
+
+- `ringConfig.ts` — loads `RING_ACCESS_TOKEN`, `RING_EVENT_SOURCE`
+  (`ring_real` | `ring_playground`, never inferred), optional
+  `RING_API_BASE_URL` (defaults to the documented
+  `https://api.amazonvision.com`), and optional
+  `RING_WEBHOOK_HMAC_SECRET`. Throws a clear, actionable `RingConfigError`
+  when required configuration is missing — this project fails safely
+  rather than guessing or proceeding unauthenticated. `redactToken()` is
+  used anywhere a token's *presence* needs reporting; the value itself is
+  never included.
+- `ringTypes.ts` — two confidence tiers, handled very differently:
+  - **CONFIRMED**: the webhook envelope shape (`meta`/`data` with
+    `type`/`subType`/`attributes.source`/`source_type`/`component_ids`),
+    captured directly from Ring's API documentation.
+  - **Device discovery** (`GET /v1/devices`): a concrete example response
+    was found during Phase 2 research directly in Ring's own Partner API
+    documentation — a JSON:API `{ meta, data: [...] }` envelope with
+    `type`/`id`/`attributes.name`/`relationships` per device. This
+    project's client and normalizer were written defensively *before*
+    finding that example and happen to already be compatible with it;
+    fields beyond that one example are still not confirmed for every
+    device type, so parsing stays defensive rather than assuming a rigid
+    schema.
+  - `GET /v1/users/me`'s response body remains **unconfirmed** — no
+    example was captured. `ring:check` reports only that the call
+    succeeded, never assumes a shape from the body.
+- `ringClient.ts` — `RingApiClient`: authenticated GET only (`getCurrentUser`,
+  `listDevices`, generic `authenticatedGet`). Deliberately does **not**
+  implement live video, media downloads, computer vision, facial
+  recognition, WHEP streaming, or device controls — none of those are
+  needed for Tend and each would expand the privacy/security surface for
+  no benefit. Uses Node's built-in global `fetch`; never logs the
+  Authorization header or token, on any code path including errors.
+- `ringNormalizer.ts` — `normalizeRingWebhookEvent` converts a
+  (signature-already-verified) Ring webhook envelope into a `TendEvent`,
+  rejecting anything malformed or unsupported rather than guessing;
+  `summarizeRingDevice` defensively extracts an id/label from an
+  unconfirmed-shape device entry without ever throwing on an unexpected
+  shape.
+- `ringEventSource.ts` — `RingEventSource` implements the existing
+  `EventSource` interface. Read this carefully: Ring delivers events via
+  webhook **push**, not a pull-style "recent events" API (the Event
+  History API exists per documentation but is out of scope for this
+  phase). So `pull()` honestly returns `[]` — it does not fabricate events
+  from device-discovery data, since a device is not an event. Its real,
+  verified purpose this phase is `checkConnection()` and
+  `discoverDevices()`, which `ring:check` uses to prove genuine runtime
+  Ring API usage.
+- `ringWebhookHandler.ts` — `handleRingWebhook`, a pure, fully unit-tested
+  function (no HTTP server needed to test it) implementing: request-size
+  limit, constant-time HMAC-SHA256 verification (`crypto.timingSafeEqual`),
+  a ±5 minute replay/staleness tolerance window on `meta.time`, JSON schema
+  validation via the normalizer, and idempotent storage via the same
+  `EventStore` interface the simulator uses. **Safe-deny default**: if
+  `RING_WEBHOOK_HMAC_SECRET` isn't configured, it returns `501` and stores
+  nothing, rather than accepting unverified data.
+- Wired into the dev server as `POST /webhooks/ring`, storing into a
+  **separate** in-memory event store from the simulator/demo data — Ring-
+  sourced and simulator-sourced events never mix.
+
+### `ring:check` — the runtime proof command
+
+```bash
+npm run ring:check
+```
+
+Reads `RING_ACCESS_TOKEN`/`RING_EVENT_SOURCE`, and — **only if both are
+present** — makes a real HTTP call to the Ring Partner API. Never prints
+the token; only reports whether one is configured and its length. Exits
+non-zero and states exactly what's missing if configuration is absent.
+**Never fakes success.**
+
+### Phase 2: what was actually verified (read this before trusting any Ring claim)
+
+- **Unit-level, mocked**: `RingApiClient`, `RingEventSource`, and
+  `handleRingWebhook` are fully tested against a mocked global `fetch` and
+  hand-built fixtures — 59 new tests, all passing. These prove the
+  request-construction, response-parsing, signature-verification, replay,
+  and idempotency logic is correct in isolation. **They do not prove
+  anything about Ring's real API**, and are never described as doing so.
+- **Live network call**: attempted for real via `ring:check`, with a
+  placeholder (non-functional) token. The result: `HTTP 403` from
+  `https://api.amazonvision.com`, with the response body
+  `Host not in allowlist: api.amazonvision.com... x-deny-reason:
+  host_not_allowed` — this is this **sandboxed development environment's
+  own network egress proxy** blocking the outbound call before it ever
+  reaches Ring's servers, not a decision made by Ring's API. This was
+  independently confirmed via direct `curl` to `api.amazonvision.com`,
+  `oauth.ring.com`, and `developer.amazon.com` — all three are blocked the
+  same way. **No live Ring API call has ever succeeded from this
+  environment**, and none is claimed to have.
+- **Ring Developer Playground**: re-investigated directly for Phase 2.
+  `https://developer.amazon.com/ring/console/playground` disallows
+  automated fetching per its `robots.txt` (confirmed directly — a fetch
+  attempt was refused for exactly this reason), and using it in practice
+  requires an authenticated browser session this project has no access to.
+  Combined with the unresolved documentation question from Phase 1
+  (whether Playground-simulated events reach an externally-registered
+  webhook — still not stated anywhere in the documentation found), this
+  means: **the Playground's actual behavior for this specific question
+  remains UNKNOWN, and can only be resolved by a human logging into the
+  real portal.** This is not a gap this project can close from within a
+  sandboxed research/coding environment.
+- **Documentation discrepancy noted**: Ring's "API Development Guide" page
+  states webhooks support "three webhook types" (motion, device added,
+  device removed), while the Release Notes changelog lists 10 cumulative
+  event types (including `button_press`, `device_online`/`offline`,
+  subscription events, etc.). This project follows the more detailed,
+  explicitly-dated release-notes list (`RING_WEBHOOK_EVENT_TYPES` in
+  `ringTypes.ts`) and rejects, rather than guesses at, anything outside it.
+
+### Environment variables (Ring integration)
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `RING_ACCESS_TOKEN` | Yes, for any real Ring call | Bearer token for the Ring Partner API |
+| `RING_EVENT_SOURCE` | Yes, for any real Ring call | `ring_real` or `ring_playground` — always explicit, never inferred |
+| `RING_API_BASE_URL` | No | Overrides the default `https://api.amazonvision.com` (e.g. for a staging URL) |
+| `RING_WEBHOOK_HMAC_SECRET` | No | Enables `POST /webhooks/ring`; without it, the route safely returns 501 |
+
+None of these are ever committed; no `.env` file exists in this repository.
 
 ## Development simulator
 
@@ -258,6 +386,7 @@ npm run typecheck   # tsc --noEmit
 npm test             # builds, then runs the full suite with node:test
 npm run dev:demo -- <scenario>   # normal | deviation_missing | variable_normal | sequence_deviation
 npm run dev:server   # starts the local HTTP dev server on :8787
+npm run ring:check   # proves (or honestly disproves) genuine runtime Ring API usage — see below
 ```
 
 ### Dev server endpoints
@@ -273,6 +402,7 @@ dev_simulator`); nothing here talks to AWS or Ring.
 - `GET /reasoning` — the current reasoning-layer output.
 - `POST /scenario` — `{ "scenario": "normal" | "deviation_missing" | "variable_normal" | "sequence_deviation" }` — regenerates "today"'s events.
 - `POST /feedback` — `{ "feedbackType": "expected" | "not_useful" | "keep_watching" | "unusual", "signals": string[] }`.
+- `POST /webhooks/ring` — Ring Partner API webhook receiver. Requires the `x-signature` header and `RING_WEBHOOK_HMAC_SECRET` to be configured; returns `501` otherwise. Stores into a separate event store from the simulator data above.
 
 ### Environment note (read before filing an issue about missing packages)
 
@@ -294,8 +424,16 @@ proper dependency; a real package manager run should replace the vendored
 
 ## Current limitations
 
-- No real Ring, Ring Playground, AWS, or Bedrock integration — see "Ring
-  integration status" above.
+- No live Ring API call has ever succeeded from this development
+  environment — see "Phase 2: what was actually verified" above for the
+  exact, checkable reason (sandbox egress policy, confirmed via direct
+  `curl`), and no Ring Playground event source or webhook delivery has
+  been confirmed either.
+- No AWS integration (Lambda, API Gateway, DynamoDB, EventBridge, SNS, SES,
+  Step Functions) — explicitly out of scope until Ring integration is
+  proven with a real account, per the approved phase plan. Bedrock remains
+  behind the existing `ReasoningService` interface, unconnected to a live
+  model.
 - No authentication/authorization on the dev server — it's explicitly a
   local development tool, not exposed infrastructure.
 - No persistence — `InMemoryEventStore` and `SensitivityStore` reset on
@@ -307,3 +445,7 @@ proper dependency; a real package manager run should replace the vendored
   integration needs a household-onboarding step to map real Ring
   `deviceId`s to human-meaningful zone names, since Ring's webhook payloads
   don't include this.
+- The Ring Event History API and the Ring Partner API's `GET /v1/users/me`
+  response shape remain unconfirmed/unused — this project only implements
+  what was needed and could be verified for a minimal, honest integration
+  boundary.

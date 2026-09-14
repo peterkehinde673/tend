@@ -10,22 +10,37 @@
  * engine locally and to give the CLI demo a browsable counterpart.
  *
  * Endpoints:
- *   GET /health     -> liveness check
- *   GET /demo       -> full snapshot (baseline + deviation + reasoning + events), same data the CLI prints
- *   GET /events     -> recent normalized events (source-tagged)
- *   GET /baseline   -> the current household baseline
- *   GET /deviation  -> the current deviation result
- *   GET /reasoning  -> the current reasoning-layer output
- *   POST /scenario  -> { "scenario": "normal" | "deviation_missing" | "variable_normal" | "sequence_deviation" } — regenerates "today"
- *   POST /feedback  -> { "feedbackType": "expected" | "not_useful" | "keep_watching" | "unusual", "signals": string[] }
+ *   GET /health          -> liveness check
+ *   GET /demo            -> full snapshot (baseline + deviation + reasoning + events), same data the CLI prints
+ *   GET /events          -> recent normalized events (source-tagged)
+ *   GET /baseline        -> the current household baseline
+ *   GET /deviation       -> the current deviation result
+ *   GET /reasoning       -> the current reasoning-layer output
+ *   POST /scenario       -> { "scenario": "normal" | "deviation_missing" | "variable_normal" | "sequence_deviation" } — regenerates "today"
+ *   POST /feedback       -> { "feedbackType": "expected" | "not_useful" | "keep_watching" | "unusual", "signals": string[] }
+ *   POST /webhooks/ring  -> Ring Partner API webhook receiver (see ringWebhookHandler.ts). Stores into a SEPARATE
+ *                           event store from the simulator/demo data above — Ring-sourced events never mix with
+ *                           simulator-sourced events. Returns 501 unless RING_WEBHOOK_HMAC_SECRET is configured;
+ *                           this project has not verified that anything (Playground or otherwise) actually
+ *                           delivers webhooks to this route in the current environment — see README.
  */
 import * as http from 'node:http';
 import { URL } from 'node:url';
 import { DemoState } from './demoState';
 import { ScenarioName, SCENARIO_NAMES } from '../ingestion/simulator';
 import { isFeedbackType } from '../domain/feedback';
+import { InMemoryEventStore } from '../store/inMemoryEventStore';
+import { handleRingWebhook } from '../ingestion/ring/ringWebhookHandler';
+import { TendEventSource } from '../domain/event';
 
 const PORT = Number(process.env.PORT ?? 8787);
+
+const RING_WEBHOOK_HOUSEHOLD_ID = 'ring-household-1';
+const ringEventStore = new InMemoryEventStore();
+
+function resolveRingWebhookSource(): Extract<TendEventSource, 'ring_real' | 'ring_playground'> {
+  return process.env.RING_EVENT_SOURCE === 'ring_playground' ? 'ring_playground' : 'ring_real';
+}
 
 // Fixed demo "today"/"asOf" so the server's output matches the CLI demo
 // exactly — see src/dev/demo.ts for the rationale.
@@ -134,7 +149,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    sendJson(res, 404, { error: 'Not found', hint: 'GET /health, /demo, /events, /baseline, /deviation, /reasoning; POST /scenario, /feedback' });
+    if (req.method === 'POST' && url.pathname === '/webhooks/ring') {
+      const rawBody = await readRequestBody(req);
+      const signatureHeader = req.headers['x-signature'];
+      const result = await handleRingWebhook(
+        rawBody,
+        Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader,
+        ringEventStore,
+        {
+          householdId: RING_WEBHOOK_HOUSEHOLD_ID,
+          source: resolveRingWebhookSource(),
+          hmacSecret: process.env.RING_WEBHOOK_HMAC_SECRET,
+        },
+      );
+      sendJson(res, result.status, result.body);
+      return;
+    }
+
+    sendJson(res, 404, { error: 'Not found', hint: 'GET /health, /demo, /events, /baseline, /deviation, /reasoning; POST /scenario, /feedback, /webhooks/ring' });
   } catch (err) {
     // Never leak stack traces or internals that might include secrets;
     // this dev server holds no secrets today, but keep the habit from day one.
