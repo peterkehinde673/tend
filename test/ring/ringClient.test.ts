@@ -127,3 +127,65 @@ describe('ring/ringClient: RingApiClient — secret handling', () => {
     }
   });
 });
+
+describe('ring/ringClient: RingApiClient — getEventHistory (mocked fetch)', () => {
+  test('constructs the expected best-effort URL with event_types=motion', async () => {
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input) => {
+      capturedUrl = String(input);
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as FetchFn;
+
+    const client = new RingApiClient(FAKE_CONFIG);
+    await client.getEventHistory('device-kitchen-01');
+
+    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/devices/device-kitchen-01/history?event_types=motion`);
+  });
+
+  test('supports requesting multiple event types as a comma-separated list', async () => {
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input) => {
+      capturedUrl = String(input);
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as FetchFn;
+
+    const client = new RingApiClient(FAKE_CONFIG);
+    await client.getEventHistory('device-1', ['motion', 'on_demand']);
+
+    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/devices/device-1/history?event_types=motion,on_demand`);
+  });
+
+  test('URL-encodes a device id containing special characters', async () => {
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input) => {
+      capturedUrl = String(input);
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as FetchFn;
+
+    const client = new RingApiClient(FAKE_CONFIG);
+    await client.getEventHistory('device with spaces/slash');
+
+    assert.ok(capturedUrl?.includes(encodeURIComponent('device with spaces/slash')));
+  });
+
+  test('handles a JSON:API-style { data: [...] } response', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ data: [{ id: 'hist-1', attributes: { kind: 'motion' } }] }), { status: 200 }));
+    const client = new RingApiClient(FAKE_CONFIG);
+    const entries = await client.getEventHistory('device-1');
+    assert.equal(entries.length, 1);
+  });
+
+  test('handles a bare array response', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify([{ id: 'hist-1' }]), { status: 200 }));
+    const client = new RingApiClient(FAKE_CONFIG);
+    const entries = await client.getEventHistory('device-1');
+    assert.equal(entries.length, 1);
+  });
+
+  test('returns an empty array rather than throwing for an unrecognized shape', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ somethingElse: true }), { status: 200 }));
+    const client = new RingApiClient(FAKE_CONFIG);
+    const entries = await client.getEventHistory('device-1');
+    assert.deepEqual(entries, []);
+  });
+});

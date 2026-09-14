@@ -2,8 +2,8 @@ import { TendEvent } from '../../domain/event';
 import { EventSource } from '../eventSource';
 import { RingApiClient } from './ringClient';
 import { RingConfig } from './ringConfig';
-import { summarizeRingDevice } from './ringNormalizer';
-import { RingDeviceSummary } from './ringTypes';
+import { summarizeRingDevice, normalizeRingHistoryEntry, HistoryNormalizationFailure } from './ringNormalizer';
+import { RingDeviceSummary, RingRawHistoryEntry } from './ringTypes';
 
 /**
  * Implements the existing EventSource boundary for a real (or Playground)
@@ -11,18 +11,20 @@ import { RingDeviceSummary } from './ringTypes';
  *
  * IMPORTANT — read before assuming this "pulls Ring events": Ring delivers
  * motion/button/etc. events via webhook PUSH to a registered endpoint, not
- * via a pull-style "give me recent events" API that this class could poll
- * (the Event History API exists per documentation but is out of scope for
- * this phase, per the approved Phase 2 plan). Real-time events therefore
- * arrive through the separate webhook handler (ringWebhookHandler.ts), not
- * through this class's `pull()`.
+ * via a pull-style "give me recent events" API that this class's `pull()`
+ * (the EventSource interface method) could use directly. Real-time events
+ * therefore arrive through the separate webhook handler
+ * (ringWebhookHandler.ts), not through `pull()`, which is preserved exactly
+ * as it was: an honest no-op returning `[]`.
  *
- * `pull()` still exists (to satisfy the EventSource interface so this class
- * is a drop-in alongside the simulator) but honestly returns an empty
- * array — it does not fabricate events from device-discovery data, since
- * a device is not an event. Its real, verified purpose in this phase is
- * `checkConnection()` and `discoverDevices()`, used by `ring:check` to
- * prove genuine runtime Ring API usage.
+ * This class ADDITIONALLY exposes `pollMotionHistory()`, a distinct,
+ * explicitly-named method (not wired into `pull()`) for the Ring Event
+ * History API — Ring's own documented polling alternative to webhooks. It
+ * is kept separate from `pull()` deliberately: `pull()`'s existing,
+ * already-tested "honestly returns []" contract is preserved unchanged,
+ * and history polling is opt-in via its own method so a caller must
+ * consciously choose to use it rather than silently inheriting new
+ * behavior through the generic EventSource interface.
  */
 export class RingEventSource implements EventSource {
   readonly name: string;
@@ -38,7 +40,8 @@ export class RingEventSource implements EventSource {
   async pull(): Promise<TendEvent[]> {
     // Honest no-op: see class-level doc comment. Returning [] here, rather
     // than throwing, keeps this class usable as a drop-in EventSource
-    // without misrepresenting what it can currently do.
+    // without misrepresenting what it can currently do. Unchanged from
+    // before the Event History polling path was added.
     return [];
   }
 
@@ -56,5 +59,58 @@ export class RingEventSource implements EventSource {
   async discoverDevices(): Promise<RingDeviceSummary[]> {
     const raw = await this.client.listDevices();
     return raw.map(summarizeRingDevice);
+  }
+
+  /**
+   * Polls the Ring Event History API for a device's `motion` history (see
+   * ringTypes.ts and ringClient.ts#getEventHistory for the exact
+   * confirmed/unconfirmed breakdown of this endpoint), normalizes each
+   * entry, and returns accepted TendEvents separately from rejected raw
+   * entries with their rejection reason.
+   *
+   * DELIBERATELY UNAVAILABLE for `ring_playground` sources: this method
+   * throws immediately if `this.source !== 'ring_real'`, rather than
+   * silently attempting to poll and mislabel whatever comes back. This
+   * project has no confirmation that Ring Playground data flows through
+   * the Event History endpoint at all, and normalizeRingHistoryEntry's
+   * own type signature independently enforces the same restriction — this
+   * is a second, redundant guard against ever producing a TendEvent that
+   * claims "the Playground generated a motion event."
+   *
+   * Any entry whose kind is not exactly the confirmed production value
+   * `'motion'` (e.g. a hypothetical `'on_demand'` result) is returned in
+   * `rejected`, never silently coerced into `accepted`.
+   */
+  async pollMotionHistory(deviceId: string): Promise<{ accepted: TendEvent[]; rejected: { raw: RingRawHistoryEntry; reason: HistoryNormalizationFailure }[] }> {
+    if (this.source !== 'ring_real') {
+      throw new Error(
+        `pollMotionHistory is only available for source "ring_real" (got "${this.source}"). ` +
+          `This project has no confirmation that Ring Playground data flows through the Event History API, ` +
+          `so this path refuses to run rather than guessing — see ringEventSource.ts for the full rationale.`,
+      );
+    }
+
+    const rawEntries = await this.client.getEventHistory(deviceId, ['motion']);
+    const accepted: TendEvent[] = [];
+    const rejected: { raw: RingRawHistoryEntry; reason: HistoryNormalizationFailure }[] = [];
+
+    // householdId is not tracked by this class today (it has no concept of
+    // a linked household beyond the Ring account itself) — callers that
+    // need household scoping are expected to supply it when wiring this
+    // into a real ingestion pipeline. For this phase, the device_id is
+    // used directly as a placeholder householdId scope key so the
+    // resulting TendEvents are still well-formed and testable end to end.
+    const householdId = `ring-account-for-${deviceId}`;
+
+    for (const raw of rawEntries) {
+      const result = normalizeRingHistoryEntry(raw, deviceId, householdId, 'ring_real');
+      if ('event' in result) {
+        accepted.push(result.event);
+      } else {
+        rejected.push({ raw, reason: result.error });
+      }
+    }
+
+    return { accepted, rejected };
   }
 }

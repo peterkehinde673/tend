@@ -1,5 +1,12 @@
 import { TendEvent, TendEventSource, TendEventType, TendMotionSubType, isTendEventType, validateTendEvent } from '../../domain/event';
-import { RingRawDevice, RingWebhookEnvelope, RING_WEBHOOK_EVENT_TYPES } from './ringTypes';
+import {
+  RingRawDevice,
+  RingRawHistoryEntry,
+  RingWebhookEnvelope,
+  RING_WEBHOOK_EVENT_TYPES,
+  CONFIRMED_HISTORY_EVENT_KIND,
+  NON_PRODUCTION_HISTORY_EVENT_KINDS,
+} from './ringTypes';
 
 /**
  * Maps Ring's own motion subType strings to Tend's TendMotionSubType.
@@ -108,4 +115,97 @@ export function summarizeRingDevice(raw: RingRawDevice): { id: string | null; la
   const id = typeof raw.id === 'string' ? raw.id : null;
   const label = typeof raw.attributes?.name === 'string' ? raw.attributes.name : typeof raw.type === 'string' ? raw.type : null;
   return { id, label, unparsed: id === null && label === null };
+}
+
+export interface HistoryNormalizationFailure {
+  reason: string;
+  /** Set when the entry was rejected specifically because its kind was not the confirmed, production `motion` value — surfaced separately so callers can report this distinctly rather than lumping it in with a generic parse failure. */
+  nonProductionKind?: string;
+}
+
+export type HistoryNormalizationResult = { event: TendEvent } | { error: HistoryNormalizationFailure };
+
+/**
+ * Converts a Ring Event History entry into a TendEvent.
+ *
+ * IMPORTANT — this function's `source` parameter is deliberately typed to
+ * accept ONLY `'ring_real'`, never `'ring_playground'`. The Event History
+ * API is Ring's documented polling alternative for a real, production
+ * account's webhook-equivalent data — this project has no confirmation
+ * that Ring Playground data flows through this endpoint at all, and even
+ * if it did, an entry whose `kind` is not the confirmed production value
+ * `'motion'` (e.g. `'on_demand'`, a value found only in an unrelated,
+ * unofficial third-party library — see ringTypes.ts) is explicitly
+ * rejected below rather than normalized. This is a structural guarantee,
+ * not just a comment: there is no code path in this function that can
+ * produce a TendEvent tagged `ring_playground`, and no code path that
+ * accepts a non-`motion` kind. Together these mean this function can never
+ * claim "the Playground generated a motion event" — either the caller
+ * didn't ask for that (the type system prevents it), or the entry's own
+ * kind field disqualifies it.
+ */
+export function normalizeRingHistoryEntry(
+  raw: RingRawHistoryEntry,
+  deviceId: string,
+  householdId: string,
+  source: 'ring_real',
+  ingestedAt: string = new Date().toISOString(),
+): HistoryNormalizationResult {
+  if (!raw || typeof raw !== 'object') {
+    return { error: { reason: 'Malformed Ring history entry: not an object.' } };
+  }
+
+  const kind = typeof raw.attributes?.kind === 'string' ? raw.attributes.kind : undefined;
+  if (kind === undefined) {
+    return { error: { reason: 'Malformed Ring history entry: could not defensively determine an event kind (attributes.kind missing or not a string).' } };
+  }
+  if (kind !== CONFIRMED_HISTORY_EVENT_KIND) {
+    const isKnownNonProduction = NON_PRODUCTION_HISTORY_EVENT_KINDS.includes(kind);
+    return {
+      error: {
+        reason: isKnownNonProduction
+          ? `Rejected: history entry kind "${kind}" is not a documented production Ring Partner API value — this project will not normalize it as a genuine motion event. (This kind is known only from an unrelated, unofficial third-party consumer-API library, possibly corresponding to a Playground/on-demand-triggered result rather than a passively detected one — it is never treated as equivalent to "${CONFIRMED_HISTORY_EVENT_KIND}".)`
+          : `Rejected: history entry kind "${kind}" is not the confirmed production value "${CONFIRMED_HISTORY_EVENT_KIND}" — refusing to guess.`,
+        nonProductionKind: kind,
+      },
+    };
+  }
+
+  const entryId = typeof raw.id === 'string' ? raw.id : undefined;
+  if (!entryId) {
+    return { error: { reason: 'Malformed Ring history entry: missing a string id.' } };
+  }
+
+  const occurredAtRaw = raw.attributes?.occurred_at ?? raw.attributes?.time ?? raw.attributes?.timestamp;
+  const occurredAt = typeof occurredAtRaw === 'string' ? occurredAtRaw : undefined;
+  if (!occurredAt || Number.isNaN(Date.parse(occurredAt))) {
+    return { error: { reason: `Malformed Ring history entry: no valid occurred-at timestamp found (checked attributes.occurred_at/time/timestamp).` } };
+  }
+
+  const subType = typeof raw.attributes?.sub_type === 'string' ? raw.attributes.sub_type : undefined;
+
+  const candidate: TendEvent = {
+    householdId,
+    deviceId,
+    eventId: entryId,
+    // The Event History API has no per-item delivery request_id the way
+    // webhooks do (there is no "delivery attempt" to distinguish from the
+    // underlying occurrence) — this synthesizes a stable, local
+    // idempotency key from the entry's own id so re-polling the same
+    // history window doesn't create duplicates in the event store.
+    requestId: `history-${deviceId}-${entryId}`,
+    eventType: 'motion_detected',
+    subType: mapMotionSubType(subType),
+    occurredAt,
+    ingestedAt,
+    source,
+    rawEventId: `raw-ring-history-${deviceId}-${entryId}`,
+  };
+
+  const problems = validateTendEvent(candidate);
+  if (problems.length > 0) {
+    return { error: { reason: `Normalized Ring history entry failed validation: ${problems.join('; ')}` } };
+  }
+
+  return { event: candidate };
 }

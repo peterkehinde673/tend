@@ -1,5 +1,5 @@
 import { RingConfig, redactToken } from './ringConfig';
-import { RingRawDevice, RingRawUser } from './ringTypes';
+import { RingRawDevice, RingRawHistoryEntry, RingRawUser, RING_HISTORY_PATH_TEMPLATE, CONFIRMED_HISTORY_EVENT_KIND } from './ringTypes';
 
 /**
  * Deliberately minimal. Per the approved Phase 2 scope, this client
@@ -102,6 +102,34 @@ export class RingApiClient {
     }
     if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
       return (raw as { data: RingRawDevice[] }).data;
+    }
+    return [];
+  }
+
+  /**
+   * GET .../history?event_types=<...> — the Ring-documented "polling
+   * alternative" to webhooks. See ringTypes.ts for the exact, detailed
+   * confirmed/unconfirmed breakdown: the endpoint's *existence and purpose*
+   * is confirmed by Ring's own documentation; its *exact path and query
+   * parameter* are a best-effort construction, not a captured example.
+   *
+   * `eventTypes` defaults to `['motion']` — the only kind this project's
+   * normalizer is built to trust as a genuine passive detection event (see
+   * normalizeRingHistoryEntry). Passing anything else is supported at the
+   * client level (since we don't actually know what values the real API
+   * accepts) but will still be rejected downstream by the normalizer
+   * unless it is exactly `motion`.
+   */
+  async getEventHistory(deviceId: string, eventTypes: string[] = [CONFIRMED_HISTORY_EVENT_KIND]): Promise<RingRawHistoryEntry[]> {
+    const path = RING_HISTORY_PATH_TEMPLATE.replace('{deviceId}', encodeURIComponent(deviceId));
+    const query = `event_types=${eventTypes.map(encodeURIComponent).join(',')}`;
+    const raw = await this.authenticatedGet(`${path}?${query}`);
+
+    if (Array.isArray(raw)) {
+      return raw as RingRawHistoryEntry[];
+    }
+    if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+      return (raw as { data: RingRawHistoryEntry[] }).data;
     }
     return [];
   }

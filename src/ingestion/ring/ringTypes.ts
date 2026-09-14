@@ -136,3 +136,81 @@ export interface RingDeviceSummary {
   /** True if the raw entry could not be defensively parsed at all. */
   unparsed: boolean;
 }
+
+/**
+ * Event History API types — READ THIS BEFORE TRUSTING ANYTHING BELOW.
+ *
+ * CONFIRMED (from Ring's own documentation, api-documentation.html):
+ * - The Event History API exists and is Ring's own documented "polling
+ *   alternative" to webhooks: "If you aren't ready to process webhooks at
+ *   launch, acknowledge deliveries with 200 and use the Event History API
+ *   instead."
+ * - All Ring Partner API endpoints use base URL `https://api.amazonvision.com`,
+ *   JSON:API format, and Bearer token auth.
+ *
+ * NOT CONFIRMED (no captured example was found anywhere in official Ring
+ * documentation, despite dedicated searches during this phase):
+ * - The exact endpoint path. `RING_HISTORY_PATH` below is a best-effort
+ *   construction by analogy to every other confirmed device sub-resource
+ *   (`/v1/devices/{id}/status`, `/v1/devices/{id}/capabilities`) — it is
+ *   NOT copied from a captured example and must be corrected the moment
+ *   real documentation or portal access confirms the actual path.
+ * - The exact query parameter name/values for filtering by event kind.
+ *   This project uses `event_types=motion` because that is what was
+ *   explicitly requested for this feature — it is NOT independently
+ *   confirmed against an official captured example either.
+ * - The exact response body shape. RingRawHistoryEntry below is modeled by
+ *   analogy to the CONFIRMED webhook `data` shape (JSON:API `id`/`type`/
+ *   `attributes`), since every other confirmed Ring endpoint follows that
+ *   convention — but this is an analogy, not a captured example, and the
+ *   normalizer (see ringNormalizer.ts#normalizeRingHistoryEntry) parses it
+ *   defensively rather than assuming it's exactly right.
+ *
+ * CRITICAL, UNRELATED-API WARNING found during this phase's research: the
+ * event "kind" vocabulary `motion` / `on_demand` / `ding` appears in the
+ * changelog of `python-ring-doorbell` — a well-known **unofficial,
+ * third-party** library that reverse-engineers Ring's separate,
+ * undocumented **consumer app** API. That is a DIFFERENT API surface from
+ * the official Ring Partner/Appstore API (`api.amazonvision.com`) this
+ * project integrates with. This project does NOT assume that vocabulary
+ * applies to the official Partner API's Event History endpoint. It is
+ * represented here only as an optional passthrough (`kind`) so that if a
+ * real response ever contains a value like `on_demand`, the normalizer can
+ * defensively recognize and reject it — specifically to prevent a
+ * Playground-triggered, on-demand, or otherwise non-passive result from
+ * ever being mislabeled as a genuine passively-detected `motion` history
+ * entry. See normalizeRingHistoryEntry's hard restriction to `ring_real`.
+ */
+
+/** Best-effort, NOT confirmed. See block comment above. */
+export const RING_HISTORY_PATH_TEMPLATE = '/v1/devices/{deviceId}/history';
+
+/** The only event kind this project's history-polling path is built to trust. Anything else is rejected, not guessed at. */
+export const CONFIRMED_HISTORY_EVENT_KIND = 'motion' as const;
+
+/**
+ * Kinds explicitly known to NOT represent a genuine, passively-detected
+ * production event, sourced only from the unrelated unofficial consumer-API
+ * library referenced above. Never confirmed for the official Partner API —
+ * kept here purely as a documented rejection list, not as evidence they
+ * will ever actually appear in a real response.
+ */
+export const NON_PRODUCTION_HISTORY_EVENT_KINDS: readonly string[] = ['on_demand', 'ding'];
+
+/** Loosely-typed raw history entry. UNCONFIRMED shape — see block comment above. */
+export interface RingRawHistoryEntry {
+  id?: unknown;
+  type?: unknown;
+  attributes?: {
+    /** ASSUMED field name for the event classification. Not confirmed. */
+    kind?: unknown;
+    /** ASSUMED field name for when the event occurred. Not confirmed — checked alongside `time`/`timestamp` defensively. */
+    occurred_at?: unknown;
+    time?: unknown;
+    timestamp?: unknown;
+    sub_type?: unknown;
+    device_id?: unknown;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}

@@ -283,6 +283,39 @@ touched.
 - Wired into the dev server as `POST /webhooks/ring`, storing into a
   **separate** in-memory event store from the simulator/demo data — Ring-
   sourced and simulator-sourced events never mix.
+- `getEventHistory()` / `pollMotionHistory()` — the Ring-documented
+  **polling alternative** to webhooks ("If you aren't ready to process
+  webhooks at launch, acknowledge deliveries with 200 and use the Event
+  History API instead"). **Read this carefully before trusting it:**
+  - CONFIRMED: the Event History API exists and is Ring's own documented
+    polling alternative to webhooks.
+  - **NOT CONFIRMED**: its exact endpoint path, query parameter name, and
+    response shape. No captured example was found anywhere in official
+    Ring documentation despite dedicated searches. This project's
+    `RING_HISTORY_PATH_TEMPLATE` (`/v1/devices/{deviceId}/history`) and its
+    `event_types=motion` query parameter are a **best-effort construction**
+    by analogy to every other confirmed device sub-resource endpoint — not
+    a copied real example. `ringTypes.ts` documents this in detail.
+  - **`pollMotionHistory()` only accepts `source: 'ring_real'` — this is
+    enforced at both the type level and a runtime check.** This project
+    found the vocabulary `motion` / `on_demand` / `ding` only in the
+    changelog of `python-ring-doorbell`, a well-known **unofficial,
+    third-party** library that reverse-engineers Ring's separate,
+    undocumented *consumer app* API — a different surface entirely from
+    the official Partner API this project integrates with. Nothing here
+    assumes that vocabulary applies to the Partner API's Event History
+    endpoint. It's used only as a defensive rejection list: any history
+    entry whose `kind` isn't exactly the confirmed value `motion` (e.g. a
+    hypothetical `on_demand` result) is placed in `rejected`, never
+    normalized into an accepted `TendEvent` — so **this path can never
+    claim "the Playground generated a motion event,"** either because the
+    Playground isn't an allowed source for it at all, or because a
+    non-`motion` kind is explicitly refused.
+  - `pull()` (the `EventSource` interface method) is **completely
+    unchanged** by this addition — `pollMotionHistory()` is a separate,
+    explicitly-named, opt-in method, precisely so the existing webhook
+    path and `pull()`'s tested "honestly returns `[]`" contract are
+    preserved exactly as they were.
 
 ### `ring:check` — the runtime proof command
 

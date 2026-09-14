@@ -80,3 +80,45 @@ describe('ring/ringEventSource: discoverDevices (mocked fetch)', () => {
     await assert.rejects(() => source.discoverDevices());
   });
 });
+
+describe('ring/ringEventSource: pollMotionHistory — real polling path, kept separate from pull()', () => {
+  test('pull() is completely unaffected by the existence of pollMotionHistory (preserves the existing webhook path)', async () => {
+    const source = new RingEventSource(REAL_CONFIG);
+    assert.deepEqual(await source.pull(), []);
+  });
+
+  test('splits accepted "motion" entries from rejected non-production entries', async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'hist-1', attributes: { kind: 'motion', occurred_at: '2026-09-14T07:30:00.000Z', sub_type: 'human' } },
+            { id: 'hist-2', attributes: { kind: 'on_demand', occurred_at: '2026-09-14T07:31:00.000Z' } },
+          ],
+        }),
+        { status: 200 },
+      )) as FetchFn;
+
+    const source = new RingEventSource(REAL_CONFIG);
+    const result = await source.pollMotionHistory('device-kitchen-01');
+
+    assert.equal(result.accepted.length, 1);
+    assert.equal(result.accepted[0].eventType, 'motion_detected');
+    assert.equal(result.accepted[0].source, 'ring_real');
+
+    assert.equal(result.rejected.length, 1);
+    assert.equal(result.rejected[0].reason.nonProductionKind, 'on_demand');
+  });
+
+  test('throws immediately for a ring_playground-configured source, never attempting the call', async () => {
+    let fetchWasCalled = false;
+    globalThis.fetch = (async () => {
+      fetchWasCalled = true;
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as FetchFn;
+
+    const source = new RingEventSource(PLAYGROUND_CONFIG);
+    await assert.rejects(() => source.pollMotionHistory('device-1'), /only available for source "ring_real"/);
+    assert.equal(fetchWasCalled, false, 'the Ring API should never be called when the source is not ring_real');
+  });
+});
