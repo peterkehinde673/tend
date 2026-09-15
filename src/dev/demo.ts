@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     console.log(`  - ${JSON.stringify(e)}`);
   }
 
-  console.log('\n--- Reasoning Layer Output (TemplateReasoningService — NOT live Bedrock) ---');
+  console.log(`\n--- Reasoning Layer Output (provider actually used this call: ${snapshot.reasoningProvider}) ---`);
   console.log(JSON.stringify(snapshot.reasoning, null, 2));
 
   console.log('\n--- Recent Events (source tagged) ---');

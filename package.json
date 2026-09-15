@@ -11,9 +11,12 @@
     "test": "node --test $(find dist/test -name '*.test.js')",
     "dev:server": "ts-node src/dev/server.ts",
     "dev:demo": "ts-node src/dev/demo.ts",
-    "ring:check": "ts-node src/dev/ringCheck.ts"
+    "ring:check": "ts-node src/dev/ringCheck.ts",
+    "bedrock:check": "ts-node src/dev/bedrockCheck.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.637.0"
+  },
   "devDependencies": {
     "typescript": "^5.5.3",
     "ts-node": "^10.9.2",

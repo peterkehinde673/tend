@@ -156,15 +156,151 @@ This is the most important architectural boundary in the project:
   rejected, and any number appearing in the explanation must be traceable
   back to the supplied evidence.
 - `BedrockReasoningService` (`src/reasoning/bedrockReasoningService.ts`) is
-  the real integration shape, built around an injectable `ModelInvoker` so
-  it's fully unit-testable today. **It is not wired to a live AWS Bedrock
-  call** — this sandboxed environment has no network access to install the
-  AWS SDK, and per the approved architecture, real AWS deployment is a
-  later phase regardless.
+  the provider-independent Bedrock adapter shape, built around an
+  injectable `ModelInvoker` so it's fully unit-testable without any AWS
+  account. As of Phase 3, a real implementation of `ModelInvoker`
+  (`BedrockModelInvoker`, `src/reasoning/bedrock/`) exists and uses the
+  actual AWS SDK v3 Bedrock Converse API — see "AWS / Amazon Bedrock
+  Integration" below for exactly what that does and does not prove in this
+  environment.
 - `TemplateReasoningService` (`src/reasoning/templateReasoningService.ts`)
-  is a deterministic, non-LLM fallback used by the CLI demo and dev server
-  so the full pipeline can be exercised offline. **It is not Bedrock and is
-  never described as such anywhere in this codebase.**
+  is a deterministic, non-LLM fallback used whenever Bedrock isn't
+  configured or fails for any reason (see `FallbackReasoningService`
+  below). **It is not Bedrock and is never described as such anywhere in
+  this codebase.**
+- `FallbackReasoningService` (`src/reasoning/fallbackReasoningService.ts`)
+  is a small, entirely provider-independent composition: try a primary
+  `ReasoningService`, and on ANY failure (missing config, missing SDK,
+  network failure, a malformed model response that fails
+  `validateReasoningOutput`), fall back to a secondary one. This is what
+  guarantees the dashboard/CLI never breaks just because AWS isn't
+  configured or reachable.
+
+## AWS / Amazon Bedrock Integration
+
+**Read the CONFIRMED / NOT VERIFIED split below carefully before trusting
+any claim about Bedrock working.**
+
+### Architecture
+
+```
+Deterministic evidence (unchanged from the Reasoning boundary above)
+        │  ReasoningInput — never raw events, never Ring payloads
+        ▼
+ReasoningService (existing, provider-independent interface, UNCHANGED)
+        │
+        ▼
+FallbackReasoningService
+        ├─ primary: BedrockReasoningService(BedrockModelInvoker(BedrockClient))
+        │     — real AWS SDK v3 Converse API call, see src/reasoning/bedrock/
+        └─ fallback: TemplateReasoningService
+              — used whenever the primary fails for ANY reason
+```
+
+**Bedrock explains; it does not decide.** Nothing changed about the
+deterministic/reasoning boundary described above — `BedrockModelInvoker`
+only ever receives the same `ReasoningInput` (composite score, severity,
+structured evidence) that `TemplateReasoningService` and every existing
+test already use. Bedrock cannot alter the severity classification
+(`validateReasoningOutput` rejects a mismatched `severityLabel`), cannot
+invent evidence (a number/reference not present in the input is rejected),
+and is never given raw Ring events, device IDs, or timestamps outside what
+the deterministic engine already computed.
+
+### Files
+
+- `src/reasoning/bedrock/bedrockConfig.ts` — reads only `AWS_REGION` and
+  `BEDROCK_MODEL_ID`. AWS credentials themselves are **never** read here or
+  anywhere else in this project — they're resolved entirely by the AWS
+  SDK's own standard credential provider chain (env vars it reads itself,
+  shared credentials file, IAM role, SSO, etc.), per this project's
+  security rules.
+- `src/reasoning/bedrock/bedrockTypes.ts` — `BedrockInvocationError` and a
+  more specific `BedrockSdkUnavailableError` for the "package genuinely
+  isn't installed" case (see below).
+- `src/reasoning/bedrock/bedrockClient.ts` — wraps the real
+  `@aws-sdk/client-bedrock-runtime` Converse API. **Loads the SDK via a
+  runtime `import()` rather than a static import.** This is not
+  decorative: this sandboxed development environment's network egress
+  proxy blocks `registry.npmjs.org` (confirmed directly via `curl` —
+  `x-deny-reason: host_not_allowed`, the same behavior already documented
+  for Ring's API domains), so `npm install` cannot fetch this package
+  here. The dynamic-import pattern is what lets the rest of this project
+  typecheck, build, and test cleanly in an environment where an optional
+  heavy dependency can't be installed — it is a real, working pattern for
+  this exact situation, not a workaround that hides the limitation. The
+  moment the package is actually installed elsewhere, this code calls the
+  real API with no changes required.
+- `src/reasoning/bedrock/bedrockReasoner.ts` — `BedrockModelInvoker`,
+  the thin bridge implementing the existing `ModelInvoker` interface. This
+  is the only new class the rest of the reasoning layer needs to know
+  about.
+- `src/reasoning/fallbackReasoningService.ts` — provider-independent
+  fallback composition (see Architecture above).
+- Wired into `src/dev/demoState.ts`: if `AWS_REGION`/`BEDROCK_MODEL_ID` are
+  configured, a real Bedrock attempt is made on every reasoning call,
+  falling back to the template on any failure. `DemoSnapshot` carries a
+  `reasoningProvider: 'bedrock' | 'template'` field (kept outside the
+  `ReasoningOutput` contract itself) so the CLI/dashboard can show which
+  provider actually answered a given call, rather than assuming.
+
+### `bedrock:check` — the runtime proof command
+
+```bash
+npm run bedrock:check
+```
+
+Mirrors `ring:check` exactly: reads config, and — only if both
+`AWS_REGION` and `BEDROCK_MODEL_ID` are present — attempts one real,
+minimal Bedrock Converse call ("reply with the word OK"). Never prints
+prompt/response content, only a character count. **Never fakes success.**
+
+### CONFIRMED
+
+- AWS SDK v3 (`@aws-sdk/client-bedrock-runtime`) integration is implemented
+  using the real Converse API, exactly as it would be called in a normal
+  Node project once the package is installed.
+- 34 new Bedrock-specific tests pass — config validation, malformed/
+  non-JSON model responses, model errors, empty evidence, low-confidence
+  evidence, prompt-injection-like evidence text, secret-looking text
+  never echoed, and full graceful-fallback behavior — all against a
+  mocked `ModelInvoker`/`BedrockClient`, never against a live AWS account.
+- One test genuinely (not mocked) exercises the real dynamic-import
+  failure path, since the SDK really is absent from `node_modules` here.
+- The application runs correctly with **zero** AWS configuration (falls
+  straight to the template) and with AWS configured but the SDK/network
+  unavailable (attempts Bedrock, fails honestly, falls back) — both
+  verified by actually running the CLI demo and dev server, not just
+  reasoning about the code.
+- The original 69 Phase 1 tests and 82 Phase 2 Ring tests are unaffected —
+  185 total, all passing.
+
+### NOT VERIFIED
+
+- **No live Bedrock API call has ever succeeded from this environment.**
+  `npm run bedrock:check` with a placeholder model ID fails at the
+  dynamic-import step (`Cannot find module '@aws-sdk/client-bedrock-runtime'`)
+  because the package cannot be installed here — this is a stronger
+  negative than the Ring case (Ring's client used only Node's built-in
+  `fetch`, so no package-installation blocker existed there).
+  Consequently, this project cannot verify: that the Converse API request
+  shape used here is exactly correct, that a specific Claude model ID is
+  actually available in a specific region/account, or that a real
+  response parses as expected — all of that requires an environment where
+  the SDK can be installed and real AWS credentials exist.
+- Whether the AWS credential provider chain resolves correctly in a real
+  environment is unverified here (no credentials of any kind exist in
+  this sandbox).
+- The exact pinned version (`^3.637.0`) of `@aws-sdk/client-bedrock-runtime`
+  could not be checked against the live npm registry (`npm view` is
+  blocked the same way `npm install` is) — treat it as a reasonable,
+  unverified placeholder to be corrected on first real install.
+
+**This project does not claim "Bedrock works."** It claims: the adapter is
+correctly designed against the real SDK's real API, is thoroughly tested
+against mocks, degrades gracefully without AWS, and has never been proven
+against a live Bedrock endpoint — because it couldn't be, in this
+environment.
 
 ## Feedback mechanism (`src/feedback/feedbackEngine.ts`)
 
@@ -420,12 +556,17 @@ npm test             # builds, then runs the full suite with node:test
 npm run dev:demo -- <scenario>   # normal | deviation_missing | variable_normal | sequence_deviation
 npm run dev:server   # starts the local HTTP dev server on :8787
 npm run ring:check   # proves (or honestly disproves) genuine runtime Ring API usage — see below
+npm run bedrock:check   # proves (or honestly disproves) genuine runtime Bedrock API usage — see "AWS / Amazon Bedrock Integration"
 ```
 
 ### Dev server endpoints
 
-All data comes from the in-memory development simulator (`source:
-dev_simulator`); nothing here talks to AWS or Ring.
+All simulator/demo data comes from the in-memory development simulator
+(`source: dev_simulator`). The `/reasoning`, `/demo` responses may reflect
+a real Bedrock call if `AWS_REGION`/`BEDROCK_MODEL_ID` are configured and
+reachable (see `reasoningProvider` in the response) — otherwise they use
+the deterministic template. `/webhooks/ring` is the one route that
+genuinely talks to Ring-shaped data (see below).
 
 - `GET /health` — liveness check.
 - `GET /demo` — full snapshot: baseline + deviation + reasoning + recent events.
@@ -450,10 +591,13 @@ access**. As a result:
   bundled with another globally-available package, rather than installed
   from the registry.
 
-None of this is an architectural recommendation for production — before
-real AWS/Bedrock integration, add `@aws-sdk/client-bedrock-runtime` as a
-proper dependency; a real package manager run should replace the vendored
-`@types/node` the moment registry access is available.
+None of this is an architectural recommendation for production. This
+project's `package.json` DOES declare `@aws-sdk/client-bedrock-runtime` as
+a proper dependency with a pinned version — it simply cannot be installed
+in this specific sandbox (see "AWS / Amazon Bedrock Integration" for the
+confirmed, reproducible reason). A real package manager run in an
+environment with registry access should install it normally and also
+replace the vendored `@types/node` copy.
 
 ## Current limitations
 
@@ -462,11 +606,16 @@ proper dependency; a real package manager run should replace the vendored
   exact, checkable reason (sandbox egress policy, confirmed via direct
   `curl`), and no Ring Playground event source or webhook delivery has
   been confirmed either.
-- No AWS integration (Lambda, API Gateway, DynamoDB, EventBridge, SNS, SES,
-  Step Functions) — explicitly out of scope until Ring integration is
-  proven with a real account, per the approved phase plan. Bedrock remains
-  behind the existing `ReasoningService` interface, unconnected to a live
-  model.
+- No AWS deployment infrastructure (Lambda, API Gateway, DynamoDB,
+  EventBridge, SNS, SES, Step Functions) — explicitly out of scope until
+  Ring integration is proven with a real account, per the approved phase
+  plan.
+- No live Bedrock API call has ever succeeded from this environment —
+  see "AWS / Amazon Bedrock Integration" above for the exact, checkable
+  reason (`@aws-sdk/client-bedrock-runtime` cannot be installed here; the
+  npm registry is blocked by the same egress policy documented for Ring).
+  The adapter is real, tested against mocks, and degrades gracefully, but
+  has never been proven end-to-end against a live model.
 - No authentication/authorization on the dev server — it's explicitly a
   local development tool, not exposed infrastructure.
 - No persistence — `InMemoryEventStore` and `SensitivityStore` reset on

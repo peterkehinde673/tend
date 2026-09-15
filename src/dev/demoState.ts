@@ -3,7 +3,12 @@ import { InMemoryEventStore } from '../store/inMemoryEventStore';
 import { buildHouseholdBaseline } from '../engine/baselineEngine';
 import { evaluateDeviation } from '../engine/deviationEngine';
 import { TemplateReasoningService } from '../reasoning/templateReasoningService';
-import { ReasoningInput, ReasoningOutput } from '../reasoning/contract';
+import { BedrockReasoningService } from '../reasoning/bedrockReasoningService';
+import { FallbackReasoningService } from '../reasoning/fallbackReasoningService';
+import { ReasoningInput, ReasoningOutput, ReasoningService } from '../reasoning/contract';
+import { tryLoadBedrockConfig } from '../reasoning/bedrock/bedrockConfig';
+import { BedrockClient } from '../reasoning/bedrock/bedrockClient';
+import { BedrockModelInvoker } from '../reasoning/bedrock/bedrockReasoner';
 import { SensitivityStore, applyFeedback } from '../feedback/feedbackEngine';
 import { FeedbackEvent, FeedbackType } from '../domain/feedback';
 import { HouseholdBaseline } from '../domain/baseline';
@@ -20,8 +25,36 @@ export interface DemoSnapshot {
   baseline: HouseholdBaseline;
   deviation: DeviationResult;
   reasoning: ReasoningOutput;
+  /**
+   * Which reasoning provider actually produced `reasoning` this call.
+   * Deliberately kept OUTSIDE the ReasoningOutput contract itself (see
+   * contract.ts) — this is dev-server/demo presentation metadata, not part
+   * of the provider-independent reasoning schema.
+   */
+  reasoningProvider: 'bedrock' | 'template';
   recentEvents: TendEvent[];
   sensitivities: ReturnType<SensitivityStore['all']>;
+}
+
+/**
+ * Builds the reasoning service used by this demo state: a real Bedrock
+ * path if (and only if) AWS_REGION/BEDROCK_MODEL_ID are configured, always
+ * wrapped in a fallback to the deterministic TemplateReasoningService so
+ * missing config, a missing AWS SDK, a network failure, or a malformed
+ * model response can never break the dashboard or CLI. See
+ * fallbackReasoningService.ts and README "AWS / Amazon Bedrock
+ * Integration" for what this can and cannot prove.
+ */
+function buildReasoningService(onFallback: (reason: string) => void): { service: ReasoningService; bedrockConfigured: boolean } {
+  const loaded = tryLoadBedrockConfig();
+  const template = new TemplateReasoningService();
+
+  if ('error' in loaded) {
+    return { service: template, bedrockConfigured: false };
+  }
+
+  const bedrock = new BedrockReasoningService(new BedrockModelInvoker(new BedrockClient(loaded.config)));
+  return { service: new FallbackReasoningService(bedrock, template, onFallback), bedrockConfigured: true };
 }
 
 /**
@@ -34,9 +67,23 @@ export class DemoState {
   private readonly simulator = new HouseholdSimulator({ householdId: HOUSEHOLD_ID, seed: SEED });
   private eventStore = new InMemoryEventStore();
   private readonly sensitivityStore = new SensitivityStore();
-  private readonly reasoningService = new TemplateReasoningService();
+  private readonly reasoningService: ReasoningService;
+  private readonly bedrockConfigured: boolean;
+  private lastFallbackReason: string | undefined;
   private currentScenario: ScenarioName = 'deviation_missing';
   private seeded = false;
+
+  constructor() {
+    const built = buildReasoningService((reason) => {
+      // Safe to log: `reason` is an Error#message from our own config/SDK/
+      // network code, never the ReasoningInput/Output payloads themselves.
+      this.lastFallbackReason = reason;
+      // eslint-disable-next-line no-console
+      console.warn(`Bedrock reasoning unavailable this call, falling back to the deterministic template: ${reason}`);
+    });
+    this.reasoningService = built.service;
+    this.bedrockConfigured = built.bedrockConfigured;
+  }
 
   async ensureSeeded(today: Date): Promise<void> {
     if (this.seeded) return;
@@ -87,7 +134,9 @@ export class DemoState {
       },
       recentFeedbackContext: [],
     };
+    this.lastFallbackReason = undefined;
     const reasoning = await this.reasoningService.explain(reasoningInput);
+    const reasoningProvider: DemoSnapshot['reasoningProvider'] = this.bedrockConfigured && this.lastFallbackReason === undefined ? 'bedrock' : 'template';
 
     const recentEvents = await this.eventStore.getRecent(HOUSEHOLD_ID, 20);
 
@@ -97,6 +146,7 @@ export class DemoState {
       baseline,
       deviation,
       reasoning,
+      reasoningProvider,
       recentEvents,
       sensitivities: this.sensitivityStore.all(),
     };

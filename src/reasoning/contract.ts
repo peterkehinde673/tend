@@ -71,6 +71,13 @@ export const BANNED_EXPLANATION_TERMS: readonly string[] = [
   'facial recognition',
   'identified as',
   'biometric',
+  'police',
+  'law enforcement',
+  'credential',
+  'access token',
+  'api key',
+  'password',
+  'secret key',
 ];
 
 export interface ReasoningOutput {
@@ -97,32 +104,51 @@ export interface ReasoningService {
 export function validateReasoningOutput(output: ReasoningOutput, input: ReasoningInput): string[] {
   const problems: string[] = [];
 
+  // Defensive guards first: `output` originates from JSON.parse'd, untrusted
+  // model text that has only been cast to ReasoningOutput's TYPE, not
+  // verified to actually match its SHAPE at runtime. A malformed model
+  // response (missing fields, wrong types) must always surface as a normal
+  // validation problem here — it must never be able to crash this function
+  // with an unhandled exception, since that would propagate as an opaque
+  // TypeError instead of the safety-contract violation it actually is.
+  if (!output || typeof output !== 'object') {
+    return ['Reasoning output is not an object.'];
+  }
+
   if (output.severityLabel !== input.deviation.severity) {
     problems.push(
-      `severityLabel (${output.severityLabel}) does not match the deterministic severity (${input.deviation.severity}) — the reasoning layer must not alter the deterministic classification.`,
+      `severityLabel (${String(output.severityLabel)}) does not match the deterministic severity (${input.deviation.severity}) — the reasoning layer must not alter the deterministic classification.`,
     );
   }
 
-  const knownSignals = new Set(input.deviation.evidence.map((e) => e.signal));
-  for (const ref of output.evidenceReferences) {
-    if (!knownSignals.has(ref)) {
-      problems.push(`evidenceReferences contains "${ref}", which is not present in the supplied evidence.`);
+  if (!Array.isArray(output.evidenceReferences)) {
+    problems.push(`evidenceReferences must be an array of strings; got ${JSON.stringify(output.evidenceReferences)}.`);
+  } else {
+    const knownSignals = new Set(input.deviation.evidence.map((e) => e.signal));
+    for (const ref of output.evidenceReferences) {
+      if (!knownSignals.has(ref)) {
+        problems.push(`evidenceReferences contains "${String(ref)}", which is not present in the supplied evidence.`);
+      }
     }
-  }
-  if (output.evidenceReferences.length === 0 && input.deviation.evidence.length > 0) {
-    problems.push('evidenceReferences is empty despite evidence being supplied — explanation must cite its basis.');
+    if (output.evidenceReferences.length === 0 && input.deviation.evidence.length > 0) {
+      problems.push('evidenceReferences is empty despite evidence being supplied — explanation must cite its basis.');
+    }
   }
 
   if (!ALLOWED_RECOMMENDED_WORDING.includes(output.recommendedWording)) {
     problems.push(
-      `recommendedWording "${output.recommendedWording}" is not in the allowed wording set: ${ALLOWED_RECOMMENDED_WORDING.join(' | ')}`,
+      `recommendedWording "${String(output.recommendedWording)}" is not in the allowed wording set: ${ALLOWED_RECOMMENDED_WORDING.join(' | ')}`,
     );
   }
 
-  const lowerExplanation = output.explanation.toLowerCase();
-  for (const banned of BANNED_EXPLANATION_TERMS) {
-    if (lowerExplanation.includes(banned)) {
-      problems.push(`explanation contains banned term/phrase: "${banned}"`);
+  if (typeof output.explanation !== 'string') {
+    problems.push(`explanation must be a string; got ${JSON.stringify(output.explanation)}.`);
+  } else {
+    const lowerExplanation = output.explanation.toLowerCase();
+    for (const banned of BANNED_EXPLANATION_TERMS) {
+      if (lowerExplanation.includes(banned)) {
+        problems.push(`explanation contains banned term/phrase: "${banned}"`);
+      }
     }
   }
 
