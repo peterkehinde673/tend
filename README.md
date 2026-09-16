@@ -302,6 +302,203 @@ against mocks, degrades gracefully without AWS, and has never been proven
 against a live Bedrock endpoint — because it couldn't be, in this
 environment.
 
+## AWS Runtime / Persistent Event Store
+
+**Read the CONFIRMED / TESTED / LIVE VERIFIED / NOT VERIFIED split below
+carefully before trusting any claim about this running as "an AWS-backed
+application."**
+
+### Local mode (unchanged default)
+
+```
+Ring / Simulator -> normalization -> InMemoryEventStore -> deterministic analysis -> Bedrock/template reasoning -> result
+```
+
+Nothing about local mode changed in this phase. `EVENT_STORE` defaults to
+`in_memory` when unset — every existing CLI command, test, and dev-server
+route works exactly as before with zero AWS configuration.
+
+### AWS mode (implemented, never live-verified)
+
+```
+Ring -> verified webhook/history -> normalized TendEvent -> DynamoEventStore ->
+analysis worker (runAnalysis) -> deterministic baseline/deviation engine ->
+structured evidence -> Bedrock reasoning -> notification abstraction
+```
+
+### Persistent event store (`src/store/`)
+
+- `dynamoConfig.ts` — reads only `AWS_REGION` and `DYNAMODB_TABLE_NAME`.
+  AWS credentials are never read here — resolved entirely by the AWS SDK's
+  own standard credential provider chain, same rule as Bedrock.
+- `dynamoEventStore.ts` — implements the existing, **unchanged**
+  `EventStore` interface using `@aws-sdk/client-dynamodb` +
+  `@aws-sdk/lib-dynamodb`, loaded via the same runtime `import()` pattern
+  established for Bedrock (`registry.npmjs.org` is blocked in this
+  sandbox — confirmed, identical `x-deny-reason: host_not_allowed`
+  pattern — so these packages cannot be installed here either).
+  - **Single-table key design**: partition key `HOUSEHOLD#{householdId}`,
+    sort key `EVENT#{occurredAt}#{eventId}` for event items, plus
+    `IDEMP_EVENT#{eventId}` / `IDEMP_REQUEST#{requestId}` marker items.
+    `append` writes all three atomically via `TransactWriteItems`, each
+    conditioned on `attribute_not_exists(pk)` — this is what lets it
+    distinguish "duplicate eventId" from "duplicate requestId (replay)"
+    exactly like `InMemoryEventStore`, without ever partially writing one
+    marker and not the other.
+  - Time-range queries use `BETWEEN` (the only sort-key range DynamoDB's
+    `KeyConditionExpression` supports) plus a `FilterExpression` on the
+    stored `occurredAt` attribute to enforce the interface's exclusive
+    upper bound — the standard technique for a half-open range query.
+  - `getRecent` uses `ScanIndexForward: false` + `Limit`. No table `Scan`
+    is used anywhere.
+  - `getByDevice` queries the household partition and filters — **no GSI
+    was added**, per the "avoid unnecessary secondary indexes without a
+    demonstrated need" instruction. If device-scoped queries become a hot
+    path, a GSI on `deviceId` is the natural next step.
+- `eventStoreFactory.ts` — `EVENT_STORE=in_memory|dynamodb` runtime
+  switch, defaulting to `in_memory`. Requesting `dynamodb` without
+  `AWS_REGION`/`DYNAMODB_TABLE_NAME` configured fails loudly
+  (`DynamoConfigError`) rather than silently falling back to in-memory —
+  silently discarding persistence would be a far worse failure mode than
+  a clear startup error.
+
+### Privacy & Data Minimization (persistent store)
+
+Reviewed explicitly before implementing DynamoDB, per this phase's
+requirement. `DynamoEventStore` persists **only** the fields already
+present on the existing, unchanged `TendEvent` type (`domain/event.ts`):
+`householdId`, `deviceId`, optional `componentId`/`zoneId`,
+`eventId`/`requestId`, `eventType`, optional `subType`, `occurredAt`,
+`ingestedAt`, `source`, and `rawEventId` (itself just an internal pointer
+string, never the raw payload — see Phase 1's design). This store
+**cannot** persist OAuth tokens, webhook signatures, Authorization
+headers, raw Ring payloads, video, audio, biometric data, or facial
+embeddings, because none of those ever exist on a `TendEvent` in the
+first place — data minimization here is inherited structurally from
+Phase 1's domain model, not bolted on separately. The webhook handler
+(`ringWebhookHandler.ts`, unchanged) verifies the HMAC signature and
+replay window **before** normalization and persistence ever happen — an
+invalid or stale webhook is rejected before it reaches the store.
+
+### Ring Event History → persistent store
+
+`src/ingestion/ring/ringHistorySync.ts` (`syncMotionHistoryToStore`) polls
+history via the existing, unchanged `RingEventSource.pollMotionHistory`
+and persists every accepted `motion` entry through the same `EventStore`
+interface the webhook path and simulator use. It inherits, unchanged:
+the `ring_playground` restriction (refuses to run at all for that
+source), the rejection of non-`motion` kinds (`on_demand`, `ding` — never
+mislabeled as genuine motion), and `EventStore.append`'s idempotency
+contract (re-polling the same window never creates duplicates).
+
+**Event History contract confidence, re-checked this phase:** a real
+developer's post on the Amazon Developer Community forum
+(`community.amazondeveloper.com`, May 2026) independently describes using
+`GET /v1/history/devices/{device_id}/events` with
+`event_types=motion,on_demand` (cameras) or `event_types=ding,on_demand,motion`
+(doorbells) against the official Partner API. This is **user-generated
+forum content, not an Amazon-authored documentation page** — a second
+independent real-world source corroborating the path/vocabulary this
+project had already guessed by analogy, which is why
+`RING_HISTORY_PATH_TEMPLATE` was updated to match it. A separately
+claimed dotted-subtype filtering convention (`motion.human`,
+`motion.vehicle`, etc.) was traced, on inspection, to an **unofficial,
+third-party** Python client/emulator project's own invented abstraction —
+not to Ring itself — so this project did not adopt it; the confirmed
+webhook payload's separate `type`/`subType` fields (already implemented)
+remain the model.
+
+### Scheduled analysis design
+
+The AWS-native target is:
+
+```
+EventBridge Scheduler -> analysis worker (Lambda) -> DynamoEventStore ->
+deterministic engine -> Bedrock -> notification abstraction
+```
+
+**This phase implements the worker and its dependencies
+(`src/analysis/analysisWorker.ts`, `runAnalysis()`) — it does not deploy
+EventBridge Scheduler or Lambda infrastructure**, per the explicit
+instruction to avoid overbuilding infrastructure for its own sake.
+`runAnalysis()` is exactly the function a Lambda handler, a cron job, or a
+manual invocation would call: it loads events via one bounded
+`getByTimeRange` query, runs the **unchanged** deterministic
+baseline/deviation engine, builds `ReasoningInput` from the resulting
+evidence only, calls the existing `ReasoningService` interface, and
+optionally delivers a digest via `NotificationService`. **The reasoning
+service is structurally incapable of deciding whether an anomaly
+exists** — the deterministic engine's classification happens before
+`runAnalysis` ever touches the reasoning layer, and a reasoning
+implementation that tries to report a different severity is rejected by
+the existing, unchanged safety contract (proven directly in
+`test/analysis/analysisWorker.test.ts`).
+
+**Remaining deployment wiring for a future phase**: an actual EventBridge
+Scheduler rule, a Lambda function wrapping `runAnalysis()`, IAM roles
+scoped to the specific DynamoDB table and Bedrock model, and CloudWatch
+alarms/logging configuration. None of this is application logic — it's
+infrastructure-as-code that has no local-testable equivalent, which is
+why it's deliberately left out of this phase rather than built without
+being able to verify it.
+
+### Notification abstraction (`src/notification/`)
+
+`NotificationService` interface with exactly one implementation,
+`ConsoleNotificationService` — per the explicit instruction not to add
+multiple providers speculatively. It honors the reasoning layer's own
+`notifyRecommended: false` as a deliberate no-op (not a silent failure),
+and only ever logs fields already present on the reasoning output — never
+raw evidence, never raw Ring data. SNS/email/push can be added later as
+additional `NotificationService` implementations without touching
+`analysisWorker.ts` or anything upstream of it.
+
+### `analysis:check` — exercising the worker locally
+
+```bash
+npm run analysis:check [normal|deviation_missing|variable_normal|sequence_deviation]
+```
+
+Runs the full pipeline (simulator -> in-memory store -> `runAnalysis` ->
+template reasoning -> console notification) end to end with zero AWS/Ring
+credentials, so the worker's correctness can be verified without any live
+service.
+
+### CONFIRMED / TESTED
+
+- `EventStore` interface unchanged; `DynamoEventStore` implements it using
+  the real AWS SDK v3 Converse-style pattern already established for
+  Bedrock (dynamic import, since the package can't be installed here).
+- Idempotency semantics (duplicate eventId vs. duplicate requestId/replay)
+  are preserved exactly, via an atomic `TransactWriteItems` design.
+- No table `Scan` anywhere; all queries are partition-scoped and bounded.
+- Ring webhook path re-smoke-tested live against the running dev server
+  with the new configurable store wired in — identical behavior to
+  Phase 2 (valid signature 200, replay 200/duplicate, invalid signature
+  401), confirmed by actually running it, not just by unit tests.
+- The analysis worker's anomaly-decision ordering (deterministic engine
+  before reasoning, reasoning cannot override severity) is proven by a
+  dedicated test using the real `BedrockReasoningService` safety contract.
+- 24 new Phase 4 tests pass, 219 total (up from 185 at the end of Phase 3).
+
+### LIVE VERIFIED
+
+- Nothing new in this phase. See "AWS / Amazon Bedrock Integration" above
+  for what was and wasn't live-verified for Bedrock specifically (answer:
+  nothing — the SDK cannot be installed here).
+
+### NOT VERIFIED
+
+- **No live DynamoDB call has ever succeeded from this environment** —
+  the same `@aws-sdk/client-dynamodb`/`@aws-sdk/lib-dynamodb` packages
+  cannot be installed here (registry blocked), so `DynamoEventStore`'s
+  real request/response shapes against an actual table have never been
+  exercised, only its key-construction logic and its genuine
+  SDK-unavailable failure path.
+- No real DynamoDB table has ever been provisioned or queried.
+- The EventBridge Scheduler + Lambda deployment path is designed but not
+  built or deployed in this phase.
+
 ## Feedback mechanism (`src/feedback/feedbackEngine.ts`)
 
 Caregiver feedback (`expected` / `not_useful` / `keep_watching` / `unusual`)
@@ -557,6 +754,7 @@ npm run dev:demo -- <scenario>   # normal | deviation_missing | variable_normal 
 npm run dev:server   # starts the local HTTP dev server on :8787
 npm run ring:check   # proves (or honestly disproves) genuine runtime Ring API usage — see below
 npm run bedrock:check   # proves (or honestly disproves) genuine runtime Bedrock API usage — see "AWS / Amazon Bedrock Integration"
+npm run analysis:check [scenario]   # exercises the full analysis worker pipeline locally — see "AWS Runtime / Persistent Event Store"
 ```
 
 ### Dev server endpoints
@@ -606,28 +804,37 @@ replace the vendored `@types/node` copy.
   exact, checkable reason (sandbox egress policy, confirmed via direct
   `curl`), and no Ring Playground event source or webhook delivery has
   been confirmed either.
-- No AWS deployment infrastructure (Lambda, API Gateway, DynamoDB,
-  EventBridge, SNS, SES, Step Functions) — explicitly out of scope until
-  Ring integration is proven with a real account, per the approved phase
-  plan.
-- No live Bedrock API call has ever succeeded from this environment —
-  see "AWS / Amazon Bedrock Integration" above for the exact, checkable
-  reason (`@aws-sdk/client-bedrock-runtime` cannot be installed here; the
-  npm registry is blocked by the same egress policy documented for Ring).
-  The adapter is real, tested against mocks, and degrades gracefully, but
-  has never been proven end-to-end against a live model.
+- No AWS deployment infrastructure actually deployed (Lambda, API Gateway,
+  EventBridge Scheduler, SNS, SES, Step Functions) — `DynamoEventStore`
+  and the analysis worker are implemented and locally tested, but no real
+  AWS resources have been provisioned; explicitly out of scope for this
+  phase per the "avoid overbuilding infrastructure" instruction.
+- No live Bedrock or DynamoDB API call has ever succeeded from this
+  environment — see "AWS / Amazon Bedrock Integration" and "AWS Runtime /
+  Persistent Event Store" above for the exact, checkable reason
+  (`@aws-sdk/*` packages cannot be installed here; the npm registry is
+  blocked by the same egress policy documented for Ring). Both adapters
+  are real, tested against mocks/fakes, and degrade gracefully, but
+  neither has been proven end-to-end against a live AWS account.
 - No authentication/authorization on the dev server — it's explicitly a
   local development tool, not exposed infrastructure.
-- No persistence — `InMemoryEventStore` and `SensitivityStore` reset on
-  restart. A DynamoDB-backed implementation can be dropped in behind the
-  existing `EventStore` interface without touching any other layer.
+- `SensitivityStore` (caregiver feedback) still resets on restart even
+  when `EVENT_STORE=dynamodb` — only the event store itself was made
+  persistent this phase; feedback persistence is a natural next step
+  using the same `DynamoEventStore` pattern.
 - The `deviation_missing` vs `sequence_deviation` calibration property noted
   above is a known open tuning question, not a defect being hidden.
 - `zoneId` is currently assigned directly by the simulator; a real
   integration needs a household-onboarding step to map real Ring
   `deviceId`s to human-meaningful zone names, since Ring's webhook payloads
   don't include this.
-- The Ring Event History API and the Ring Partner API's `GET /v1/users/me`
-  response shape remain unconfirmed/unused — this project only implements
-  what was needed and could be verified for a minimal, honest integration
-  boundary.
+- The Ring Partner API's `GET /v1/users/me` response shape remains
+  unconfirmed/unused. The Event History endpoint's path/vocabulary is now
+  corroborated by a real-developer community-forum report (see above) but
+  still not by an Amazon-authored documentation page directly.
+- No GitHub remote is configured in this development environment, and
+  `github.com` is blocked by the same egress policy as everything else —
+  confirmed directly via `curl` (`x-deny-reason: host_not_allowed`) and
+  `git ls-remote`. All Phase 4 work exists only as local commits on
+  `phase-4-aws-runtime`; pushing requires an environment with actual
+  GitHub network access and configured credentials.
