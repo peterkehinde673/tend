@@ -148,17 +148,35 @@ export interface RingDeviceSummary {
  * - All Ring Partner API endpoints use base URL `https://api.amazonvision.com`,
  *   JSON:API format, and Bearer token auth.
  *
- * NOT CONFIRMED (no captured example was found anywhere in official Ring
- * documentation, despite dedicated searches during this phase):
- * - The exact endpoint path. `RING_HISTORY_PATH` below is a best-effort
- *   construction by analogy to every other confirmed device sub-resource
- *   (`/v1/devices/{id}/status`, `/v1/devices/{id}/capabilities`) — it is
- *   NOT copied from a captured example and must be corrected the moment
- *   real documentation or portal access confirms the actual path.
- * - The exact query parameter name/values for filtering by event kind.
- *   This project uses `event_types=motion` because that is what was
- *   explicitly requested for this feature — it is NOT independently
- *   confirmed against an official captured example either.
+ * UPGRADED CONFIDENCE (Phase 4 re-check) — corroborated, but NOT from an
+ * Amazon-authored documentation page directly:
+ * - `GET /v1/history/devices/{device_id}/events` and a comma-separated
+ *   `event_types` query parameter (e.g. `event_types=motion,on_demand` for
+ *   cameras, `event_types=ding,on_demand,motion` for doorbells) appear in
+ *   a real developer's post on the Amazon Developer Community forum
+ *   (community.amazondeveloper.com, "Obtaining a camera snapshot",
+ *   May 2026) describing their own working integration. This is
+ *   user-generated forum content, not an Amazon-authored documentation
+ *   page — a second independent real-world source corroborating the same
+ *   shape this project had already guessed by analogy, but still short of
+ *   a captured example from Ring's own docs. `RING_HISTORY_PATH_TEMPLATE`
+ *   below has been updated to match this corroborated path.
+ * - The project owner separately asserted that current official
+ *   documentation confirms dotted per-subtype filtering values such as
+ *   `motion.human`/`motion.vehicle`/`motion.animal`/`motion.other_motion`.
+ *   This project's own research found that specific dotted vocabulary
+ *   ONLY inside an unofficial, third-party Python client/emulator project
+ *   ("ring-sandbox" on GitHub) — i.e. that project's own invented
+ *   abstraction over the API, not a confirmed literal value from Ring
+ *   itself. The CONFIRMED webhook payload (motion-detection.html) uses a
+ *   separate `type`/`subType` field pair, not a combined dotted string —
+ *   consistent with how this project already models subType. This
+ *   project therefore keeps `event_types` filtering to flat values
+ *   (`motion`, `on_demand`, `ding`) rather than adopting the dotted
+ *   convention, pending an actual captured example from Ring's own
+ *   documentation confirming otherwise.
+ *
+ * STILL NOT CONFIRMED from an Amazon-authored documentation page directly:
  * - The exact response body shape. RingRawHistoryEntry below is modeled by
  *   analogy to the CONFIRMED webhook `data` shape (JSON:API `id`/`type`/
  *   `attributes`), since every other confirmed Ring endpoint follows that
@@ -166,34 +184,41 @@ export interface RingDeviceSummary {
  *   normalizer (see ringNormalizer.ts#normalizeRingHistoryEntry) parses it
  *   defensively rather than assuming it's exactly right.
  *
- * CRITICAL, UNRELATED-API WARNING found during this phase's research: the
- * event "kind" vocabulary `motion` / `on_demand` / `ding` appears in the
- * changelog of `python-ring-doorbell` — a well-known **unofficial,
- * third-party** library that reverse-engineers Ring's separate,
- * undocumented **consumer app** API. That is a DIFFERENT API surface from
- * the official Ring Partner/Appstore API (`api.amazonvision.com`) this
- * project integrates with. This project does NOT assume that vocabulary
- * applies to the official Partner API's Event History endpoint. It is
- * represented here only as an optional passthrough (`kind`) so that if a
- * real response ever contains a value like `on_demand`, the normalizer can
- * defensively recognize and reject it — specifically to prevent a
- * Playground-triggered, on-demand, or otherwise non-passive result from
- * ever being mislabeled as a genuine passively-detected `motion` history
- * entry. See normalizeRingHistoryEntry's hard restriction to `ring_real`.
+ * CRITICAL, UNRELATED-API WARNING found during Phase 2's research (still
+ * holds after the Phase 4 re-check): the event "kind" vocabulary `motion`
+ * / `on_demand` / `ding` ALSO appears in the changelog of
+ * `python-ring-doorbell` — a well-known **unofficial, third-party**
+ * library that reverse-engineers Ring's separate, undocumented
+ * **consumer app** API, a DIFFERENT API surface from the official Ring
+ * Partner/Appstore API (`api.amazonvision.com`) this project integrates
+ * with. The Phase 4 community-forum corroboration above is a real
+ * developer describing the official Partner API specifically, which is
+ * why this project now treats the flat `motion`/`on_demand`/`ding`
+ * vocabulary as reasonably corroborated for the Partner API too — but
+ * `on_demand` and `ding` are still never treated as equivalent to a
+ * genuine passively-detected `motion` event. `on_demand` in particular is
+ * presumed to correspond to a manually-triggered/live-view-initiated
+ * result (e.g. via Ring Playground) rather than autonomous motion
+ * detection, though this project has not independently confirmed that
+ * specific correspondence either — it is rejected regardless, on the
+ * principle that only `motion` is treated as production-grade evidence.
+ * See normalizeRingHistoryEntry's hard restriction to `ring_real`.
  */
 
-/** Best-effort, NOT confirmed. See block comment above. */
-export const RING_HISTORY_PATH_TEMPLATE = '/v1/devices/{deviceId}/history';
+/** Corroborated by a real-developer community-forum report (Amazon Developer Community); not from an Amazon-authored documentation page directly. See block comment above. */
+export const RING_HISTORY_PATH_TEMPLATE = '/v1/history/devices/{deviceId}/events';
 
 /** The only event kind this project's history-polling path is built to trust. Anything else is rejected, not guessed at. */
 export const CONFIRMED_HISTORY_EVENT_KIND = 'motion' as const;
 
 /**
  * Kinds explicitly known to NOT represent a genuine, passively-detected
- * production event, sourced only from the unrelated unofficial consumer-API
- * library referenced above. Never confirmed for the official Partner API —
- * kept here purely as a documented rejection list, not as evidence they
- * will ever actually appear in a real response.
+ * production event. `on_demand` and `ding` are corroborated as real
+ * Partner API `event_types` values by the Phase 4 community-forum report
+ * referenced above; `ding` is a legitimate doorbell-press event but is
+ * handled via the confirmed `button_press` webhook type elsewhere in this
+ * project, not via history polling, so it is excluded here too rather
+ * than silently accepted as a motion-equivalent.
  */
 export const NON_PRODUCTION_HISTORY_EVENT_KINDS: readonly string[] = ['on_demand', 'ding'];
 

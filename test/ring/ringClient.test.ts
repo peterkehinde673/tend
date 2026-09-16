@@ -139,7 +139,7 @@ describe('ring/ringClient: RingApiClient — getEventHistory (mocked fetch)', ()
     const client = new RingApiClient(FAKE_CONFIG);
     await client.getEventHistory('device-kitchen-01');
 
-    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/devices/device-kitchen-01/history?event_types=motion`);
+    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/history/devices/device-kitchen-01/events?event_types=motion`);
   });
 
   test('supports requesting multiple event types as a comma-separated list', async () => {
@@ -152,7 +152,7 @@ describe('ring/ringClient: RingApiClient — getEventHistory (mocked fetch)', ()
     const client = new RingApiClient(FAKE_CONFIG);
     await client.getEventHistory('device-1', ['motion', 'on_demand']);
 
-    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/devices/device-1/history?event_types=motion,on_demand`);
+    assert.equal(capturedUrl, `${FAKE_CONFIG.apiBaseUrl}/v1/history/devices/device-1/events?event_types=motion,on_demand`);
   });
 
   test('URL-encodes a device id containing special characters', async () => {
