@@ -29,14 +29,17 @@ import { URL } from 'node:url';
 import { DemoState } from './demoState';
 import { ScenarioName, SCENARIO_NAMES } from '../ingestion/simulator';
 import { isFeedbackType } from '../domain/feedback';
-import { InMemoryEventStore } from '../store/inMemoryEventStore';
+import { createEventStore } from '../store/eventStoreFactory';
 import { handleRingWebhook } from '../ingestion/ring/ringWebhookHandler';
 import { TendEventSource } from '../domain/event';
 
 const PORT = Number(process.env.PORT ?? 8787);
 
 const RING_WEBHOOK_HOUSEHOLD_ID = 'ring-household-1';
-const ringEventStore = new InMemoryEventStore();
+// Selected via EVENT_STORE=in_memory|dynamodb (defaults to in_memory).
+// This is the store Ring-sourced webhook/history events persist into —
+// deliberately separate from the simulator/demo DemoState's own store.
+const ringEventStore = createEventStore();
 
 function resolveRingWebhookSource(): Extract<TendEventSource, 'ring_real' | 'ring_playground'> {
   return process.env.RING_EVENT_SOURCE === 'ring_playground' ? 'ring_playground' : 'ring_real';
@@ -83,7 +86,12 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
 
     if (req.method === 'GET' && url.pathname === '/health') {
-      sendJson(res, 200, { status: 'ok', service: 'tend-dev-server', note: 'Local development server, not production infrastructure.' });
+      sendJson(res, 200, {
+        status: 'ok',
+        service: 'tend-dev-server',
+        note: 'Local development server, not production infrastructure.',
+        ringEventStore: process.env.EVENT_STORE === 'dynamodb' ? 'dynamodb' : 'in_memory',
+      });
       return;
     }
 
