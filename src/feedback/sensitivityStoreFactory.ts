@@ -1,12 +1,12 @@
 import { SensitivityStore } from './sensitivityStore';
 import { DynamoSensitivityStore } from './dynamoSensitivityStore';
-import { loadDynamoConfig } from '../store/dynamoConfig';
+import { loadDynamoEventStoreConfig } from '../store/dynamoConfig';
 
 /** Select persistent feedback storage from the same runtime switch as events. */
 export function createSensitivityStore(): SensitivityStore {
   const backend = process.env.EVENT_STORE ?? 'in_memory';
   if (backend === 'in_memory') return new InMemorySensitivityStore();
-  if (backend === 'dynamodb') return new DynamoSensitivityStore(loadDynamoConfig());
+  if (backend === 'dynamodb') return new DynamoSensitivityStore(loadDynamoEventStoreConfig());
   throw new Error(`Unsupported EVENT_STORE backend: ${backend}`);
 }
 
