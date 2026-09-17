@@ -2,12 +2,11 @@
   "name": "tend",
   "version": "0.1.0",
   "private": true,
-  "description": "Tend — Explainable Routine-Deviation Reasoning (Phase 1A core engine)",
+  "description": "Tend — Explainable Routine-Deviation Reasoning",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pretest": "tsc -p tsconfig.json",
     "test": "node --test $(find dist/test -name '*.test.js')",
     "dev:server": "ts-node src/dev/server.ts",
     "dev:demo": "ts-node src/dev/demo.ts",
