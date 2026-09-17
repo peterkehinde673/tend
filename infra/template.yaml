@@ -1,12 +1,12 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: '2010-09-31'
 Transform: AWS::Serverless-2016-10-31
-Description: Tend — Ring webhook ingestion and scheduled routine-deviation analysis.
+Description: Tend — Ring webhook ingestion, caregiver feedback, and scheduled routine-deviation analysis.
 
 Parameters:
   RingWebhookHmacSecret:
     Type: String
     NoEcho: true
-    Description: HMAC secret configured for the Ring webhook integration.
+    Description: HMAC secret used to authenticate Ring webhooks and caregiver feedback requests.
   BedrockModelId:
     Type: String
     Default: ''
@@ -73,6 +73,12 @@ Resources:
             ApiId: !Ref TendApi
             Path: /webhooks/ring
             Method: POST
+        CaregiverFeedback:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /feedback
+            Method: POST
 
   TendAnalysisSchedule:
     Type: AWS::Scheduler::Schedule
@@ -127,15 +133,18 @@ Resources:
         - Key: Application
           Value: Tend
         - Key: DataClass
-          Value: normalized-household-events-only
+          Value: normalized-household-events-and-feedback-state
 
 Outputs:
   RingWebhookUrl:
     Description: HTTPS endpoint to configure as the Ring webhook target.
     Value: !Sub 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/webhooks/ring'
+  CaregiverFeedbackUrl:
+    Description: HTTPS endpoint for authenticated caregiver feedback.
+    Value: !Sub 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/feedback'
   EventsTableName:
-    Description: DynamoDB table storing normalized Tend events.
+    Description: DynamoDB table storing normalized Tend events and sensitivity state.
     Value: !Ref TendEventsTable
   AnalysisFunctionName:
-    Description: Lambda function handling webhook and scheduled analysis invocations.
+    Description: Lambda function handling webhook, feedback, and scheduled analysis invocations.
     Value: !Ref TendRuntimeFunction
