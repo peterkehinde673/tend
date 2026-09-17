@@ -45,9 +45,11 @@ describe('runtime/lambdaHandler', () => {
     const previousStore = process.env.EVENT_STORE;
     const previousRegion = process.env.AWS_REGION;
     const previousModel = process.env.BEDROCK_MODEL_ID;
+    const previousHousehold = process.env.RING_HOUSEHOLD_ID;
     delete process.env.EVENT_STORE;
     delete process.env.AWS_REGION;
     delete process.env.BEDROCK_MODEL_ID;
+    delete process.env.RING_HOUSEHOLD_ID;
 
     try {
       const result = await handler({
@@ -70,6 +72,8 @@ describe('runtime/lambdaHandler', () => {
       else process.env.AWS_REGION = previousRegion;
       if (previousModel === undefined) delete process.env.BEDROCK_MODEL_ID;
       else process.env.BEDROCK_MODEL_ID = previousModel;
+      if (previousHousehold === undefined) delete process.env.RING_HOUSEHOLD_ID;
+      else process.env.RING_HOUSEHOLD_ID = previousHousehold;
     }
   });
 
