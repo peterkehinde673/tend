@@ -24,6 +24,7 @@ test('feedback rejects a payload for a different household', async () => {
     headers: { 'x-signature': signed(body, 'boundary-test-secret') },
   });
 
+  assert.ok('statusCode' in result);
   assert.equal(result.statusCode, 403);
 });
 
