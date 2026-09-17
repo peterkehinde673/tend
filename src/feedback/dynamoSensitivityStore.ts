@@ -68,7 +68,7 @@ export function sensitivitySortKey(signal: string): string {
 
 function stripKeys(item: Record<string, unknown>): SignalSensitivity {
   const { pk: _pk, sk: _sk, ...rest } = item;
-  return rest as SignalSensitivity;
+  return rest as unknown as SignalSensitivity;
 }
 
 export interface SensitivityDocClient {
