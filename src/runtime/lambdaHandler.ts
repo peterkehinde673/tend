@@ -11,6 +11,8 @@ import { runAnalysis } from '../analysis/analysisWorker';
 import { createSensitivityStore } from '../feedback/sensitivityStoreFactory';
 import { applyPersistentFeedback } from '../feedback/persistentFeedback';
 import { FeedbackEvent, isFeedbackType } from '../domain/feedback';
+import { NotificationService } from '../notification/notificationService';
+import { SnsNotificationService } from '../notification/snsNotificationService';
 
 interface LambdaEvent {
   requestContext?: { http?: { method?: string; path?: string } };
@@ -66,9 +68,15 @@ async function handleScheduledEvent(event: LambdaEvent): Promise<{ status: strin
   if (Number.isNaN(asOf.getTime())) throw new Error('Invalid scheduled analysis asOf timestamp.');
   const today = new Date(asOf);
   today.setUTCHours(0, 0, 0, 0);
-  const result = await runAnalysis({ householdId, store: createEventStore(), sensitivityStore: createSensitivityStore(), reasoningService: buildReasoningService(), today, asOf });
-  console.log(JSON.stringify({ status: 'analysis_complete', householdId, severity: result.deviation.severity, notifyRecommended: result.reasoning.notifyRecommended }));
+  const notificationService = createNotificationService();
+  const result = await runAnalysis({ householdId, store: createEventStore(), sensitivityStore: createSensitivityStore(), reasoningService: buildReasoningService(), notificationService, today, asOf });
+  console.log(JSON.stringify({ status: 'analysis_complete', householdId, severity: result.deviation.severity, notifyRecommended: result.reasoning.notifyRecommended, notificationDelivered: result.notification?.delivered ?? false }));
   return { status: 'analysis_complete', householdId, severity: result.deviation.severity };
+}
+
+function createNotificationService(): NotificationService | undefined {
+  const topicArn = process.env.TEND_SNS_TOPIC_ARN;
+  return topicArn ? new SnsNotificationService(topicArn) : undefined;
 }
 
 function buildReasoningService(): import('../reasoning/contract').ReasoningService {
