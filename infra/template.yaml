@@ -32,24 +32,19 @@ Globals:
         RING_WEBHOOK_HMAC_SECRET: !Ref RingWebhookHmacSecret
         RING_EVENT_SOURCE: ring_real
         RING_HOUSEHOLD_ID: ring-household-1
-        BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
 
 Resources:
   TendApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: $default
-      CorsConfiguration:
-        AllowMethods:
-          - POST
-        AllowOrigins:
-          - '*'
 
   TendRuntimeFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../
-      Handler: dist/src/runtime/lambdaHandler.handler
+      Handler: src/runtime/lambdaHandler.handler
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref TendEventsTable
@@ -58,7 +53,19 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:Converse
-              Resource: !If [BedrockConfigured, !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}', !Ref AWS::NoValue]
+              Resource: !If
+                - BedrockConfigured
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/__bedrock_disabled__'
+      Metadata:
+        BuildMethod: esbuild
+        BuildProperties:
+          EntryPoints:
+            - src/runtime/lambdaHandler.ts
+          Bundle: true
+          Minify: false
+          Target: es2020
+          Sourcemap: true
       Events:
         RingWebhook:
           Type: HttpApi
