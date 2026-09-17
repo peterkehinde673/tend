@@ -5,11 +5,24 @@ import { handler } from '../../src/runtime/lambdaHandler';
 describe('runtime/lambdaHandler', () => {
   test('returns 404 for unsupported HTTP routes', async () => {
     const result = await handler({
-      requestContext: { http: { method: 'GET', path: '/health' } },
+      requestContext: { http: { method: 'GET', path: '/unsupported' } },
     });
 
     assert.equal(result.statusCode, 404);
     assert.deepEqual(JSON.parse(result.body), { error: 'Not found' });
+  });
+
+  test('returns health status for the runtime health endpoint', async () => {
+    const result = await handler({
+      requestContext: { http: { method: 'GET', path: '/health' } },
+    });
+
+    assert.equal(result.statusCode, 200);
+    assert.deepEqual(JSON.parse(result.body), {
+      status: 'ok',
+      service: 'tend-runtime',
+      eventStore: process.env.EVENT_STORE ?? 'in_memory',
+    });
   });
 
   test('returns the existing safe-deny webhook response when HMAC configuration is absent', async () => {
