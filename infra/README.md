@@ -4,15 +4,21 @@ Phase 5 adds a small AWS-native deployment boundary around the existing Tend ser
 
 ## What this provisions
 
-- **API Gateway HTTP API** with `POST /webhooks/ring`
+- **API Gateway HTTP API** with `POST /webhooks/ring` and authenticated `POST /feedback`
 - **AWS Lambda** runtime entry point at `src/runtime/lambdaHandler.ts`
-- **DynamoDB** on-demand table for normalized Tend events
+- **DynamoDB** on-demand table for normalized Tend events and per-household sensitivity state
 - **EventBridge Scheduler** invoking the analysis worker every 15 minutes by default
 - Least-privilege Lambda access to the Tend DynamoDB table
 - Optional `bedrock:Converse` permission scoped to the configured foundation-model ARN
 - DynamoDB server-side encryption and point-in-time recovery
 
-The application logic remains in `src/`; the SAM template only supplies the production execution boundary.
+The application logic remains in `src/`; the SAM template supplies the production execution boundary.
+
+## Caregiver feedback persistence
+
+`POST /feedback` uses the same HMAC verification boundary as the Ring webhook. A valid request updates only the named signal sensitivities using the existing conservative feedback algorithm, then persists the normalized state as `SENSITIVITY#{signal}` under the household partition in the shared DynamoDB table.
+
+The analysis worker reloads those multipliers before deterministic deviation scoring. A multiplier above `1.0` makes that signal less sensitive; a multiplier below `1.0` makes it more sensitive. The underlying household baseline statistics are not rewritten.
 
 ## Prerequisites
 
@@ -46,17 +52,17 @@ When prompted:
 - set `BedrockModelId` to a model available to the account/region only after confirming model access
 - keep the default 15-minute schedule unless a different cadence is required
 
-The stack output `RingWebhookUrl` is the HTTPS endpoint to use when configuring the Ring webhook integration.
+The stack outputs `RingWebhookUrl` and `CaregiverFeedbackUrl` expose the two HTTPS API routes.
 
 ## Important runtime notes
 
 1. The Ring webhook is accepted only after HMAC verification, timestamp/replay checks, schema normalization, and idempotent persistence.
-2. Only normalized `TendEvent` fields are persisted; raw webhook payloads and credentials are not stored by the event store.
-3. Scheduled analysis runs the deterministic baseline/deviation engine before any reasoning call. Bedrock explains the already-computed evidence; it does not determine severity.
+2. Only normalized `TendEvent` fields and normalized sensitivity state are persisted; raw webhook payloads, credentials, video/audio, and biometric data are not stored by these persistence layers.
+3. Scheduled analysis reloads caregiver sensitivity before deterministic baseline/deviation evaluation. Bedrock receives only structured evidence after severity is computed.
 4. If Bedrock configuration is absent, the Lambda uses the existing deterministic template reasoning service. If Bedrock is configured but the call fails, the existing fallback service handles the failure.
 5. Notification delivery remains behind the existing `NotificationService` abstraction. Phase 5 does not invent an external notification provider.
-6. The current deployment template uses a single Lambda for both webhook ingestion and scheduled analysis to keep the runtime boundary small. It can be split later if measured load or isolation requirements justify it.
+6. The current deployment template uses a single Lambda for webhook ingestion, caregiver feedback, and scheduled analysis to keep the runtime boundary small. It can be split later if measured load or isolation requirements justify it.
 
 ## Verification status
 
-This directory is **deployment wiring, not proof of a live AWS deployment**. Before claiming a live integration in a hackathon submission, run `sam validate`, `sam build`, deploy into an AWS account, exercise the webhook with a real Ring-issued signature, confirm DynamoDB persistence, and confirm a scheduled invocation reaches the analysis worker.
+This directory is **deployment wiring, not proof of a live AWS deployment**. Before claiming a live integration in a hackathon submission, run `sam validate`, `sam build`, deploy into an AWS account, exercise the webhook and feedback route with valid signatures, confirm DynamoDB persistence, and confirm a scheduled invocation reaches the analysis worker.
