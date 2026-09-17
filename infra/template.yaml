@@ -80,6 +80,12 @@ Resources:
           Target: es2020
           Sourcemap: true
       Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /health
+            Method: GET
         RingWebhook:
           Type: HttpApi
           Properties:
@@ -173,6 +179,9 @@ Outputs:
   CaregiverFeedbackUrl:
     Description: HTTPS endpoint for authenticated caregiver feedback.
     Value: !Sub 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/feedback'
+  HealthUrl:
+    Description: Runtime health endpoint.
+    Value: !Sub 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/health'
   EventsTableName:
     Description: DynamoDB table storing normalized Tend events and sensitivity state.
     Value: !Ref TendEventsTable
