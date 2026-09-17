@@ -1,22 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { eventSortKey, householdPartitionKey, idempEventSortKey, idempRequestSortKey } from '../../src/store/dynamoEventStore';
+import { eventSortKey, householdPartitionKey, idempEventSortKey, idempRequestSortKey, DynamoEventStore, DynamoOperationError } from '../../src/store/dynamoEventStore';
 import { TendEvent } from '../../src/domain/event';
-
-/**
- * These tests exercise the pure key-construction helpers directly (real
- * code, no mocking needed) and the DynamoEventStore class's genuine
- * SDK-unavailable failure path (the real AWS SDK packages really aren't
- * installed in this sandboxed environment — see dynamoEventStore.ts for
- * why) — i.e. what happens when no module loader is injected and the real
- * dynamic import is attempted and fails.
- *
- * Full mocked CRUD behavior (append/query/pagination/idempotency/data
- * minimization) against a fake, injected SDK module is covered separately
- * in dynamoEventStoreCrud.test.ts, using the constructor's injectable
- * `moduleLoader` parameter added specifically to make that level of
- * testing possible without the real, uninstallable AWS SDK package.
- */
 
 function makeEvent(overrides: Partial<TendEvent> = {}): TendEvent {
   return {
@@ -55,7 +40,7 @@ describe('store/dynamoEventStore: key construction helpers', () => {
 
   test('idempEventSortKey and idempRequestSortKey are namespaced distinctly from each other and from event keys', () => {
     const eventId = 'shared-id';
-    const requestId = 'shared-id'; // deliberately the same string
+    const requestId = 'shared-id';
     const idempEvent = idempEventSortKey(eventId);
     const idempRequest = idempRequestSortKey(requestId);
     const eventKey = eventSortKey('2026-09-14T07:00:00.000Z', eventId);
@@ -73,36 +58,48 @@ describe('store/dynamoEventStore: key construction helpers', () => {
   });
 });
 
-describe('store/dynamoEventStore: SDK-unavailable path — this is a REAL test, not mocked', () => {
-  test('append() throws a clear DynamoOperationError because the AWS SDK packages are genuinely not installed', async () => {
-    const { DynamoEventStore, DynamoOperationError } = await import('../../src/store/dynamoEventStore');
-    const store = new DynamoEventStore({ region: 'us-east-1', tableName: 'fake-table' });
+describe('store/dynamoEventStore: SDK-load failure path', () => {
+  const failingLoader = async () => {
+    throw new Error('simulated missing package');
+  };
+
+  test('append() throws a clear DynamoOperationError when the SDK loader fails', async () => {
+    const store = new DynamoEventStore(
+      { region: 'us-east-1', tableName: 'fake-table' },
+      failingLoader,
+    );
     await assert.rejects(
       () => store.append(makeEvent()),
       (err: unknown) => {
         assert.ok(err instanceof DynamoOperationError);
-        assert.match((err as Error).message, /Could not load "@aws-sdk\/client-dynamodb"\/"@aws-sdk\/lib-dynamodb"/);
+        assert.match((err as Error).message, /simulated missing package/);
+        assert.match((err as Error).message, /DynamoDB append failed for household house-1/);
         return true;
       },
     );
   });
 
   test('getByHousehold() also fails honestly rather than silently returning an empty array', async () => {
-    const { DynamoEventStore } = await import('../../src/store/dynamoEventStore');
-    const store = new DynamoEventStore({ region: 'us-east-1', tableName: 'fake-table' });
-    await assert.rejects(() => store.getByHousehold('house-1'));
+    const store = new DynamoEventStore(
+      { region: 'us-east-1', tableName: 'fake-table' },
+      failingLoader,
+    );
+    await assert.rejects(
+      () => store.getByHousehold('house-1'),
+      (err: unknown) => err instanceof DynamoOperationError,
+    );
   });
 
-  test('the SDK-unavailable error never includes the table name or region in a way that could be mistaken for a credential', async () => {
-    const { DynamoEventStore } = await import('../../src/store/dynamoEventStore');
-    const store = new DynamoEventStore({ region: 'us-east-1', tableName: 'fake-table' });
+  test('the SDK-load error never includes credentials or other sensitive values', async () => {
+    const store = new DynamoEventStore(
+      { region: 'us-east-1', tableName: 'fake-table' },
+      failingLoader,
+    );
     try {
       await store.append(makeEvent());
       assert.fail('expected append() to throw');
     } catch (err) {
       const message = (err as Error).message;
-      // The error legitimately mentions the package names and a helpful
-      // pointer to the README — it must not mention anything AWS-secret-shaped.
       assert.equal(/AKIA[0-9A-Z]{16}/.test(message), false);
       assert.equal(message.toLowerCase().includes('secret'), false);
     }
