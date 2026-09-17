@@ -23,8 +23,14 @@ interface LambdaEvent {
   detail?: { householdId?: string; asOf?: string };
 }
 
+type ScheduledResult = { status: string; householdId: string; severity: string };
+type HttpLambdaEvent = LambdaEvent & { requestContext: { http: { method?: string; path?: string } } };
+type ScheduledLambdaEvent = LambdaEvent & { requestContext?: never };
+
 /** Production entry point for Ring ingestion, caregiver feedback, and scheduled analysis. */
-export async function handler(event: LambdaEvent): Promise<APIGatewayProxyResultV2 | { status: string; householdId: string; severity: string }> {
+export function handler(event: HttpLambdaEvent): Promise<APIGatewayProxyResultV2>;
+export function handler(event: ScheduledLambdaEvent): Promise<ScheduledResult>;
+export function handler(event: LambdaEvent): Promise<APIGatewayProxyResultV2 | ScheduledResult> {
   if (event.requestContext?.http) return handleHttpEvent(event);
   return handleScheduledEvent(event);
 }
@@ -66,7 +72,7 @@ async function handleFeedbackHttp(rawBody: string, signature: string | undefined
   return jsonResponse(200, { accepted: true, updatedSignals: updated.map((item) => ({ signal: item.signal, multiplier: item.multiplier, lastUpdatedAt: item.lastUpdatedAt })) });
 }
 
-async function handleScheduledEvent(event: LambdaEvent): Promise<{ status: string; householdId: string; severity: string }> {
+async function handleScheduledEvent(event: LambdaEvent): Promise<ScheduledResult> {
   const householdId = configuredHouseholdId();
   if (event.detail?.householdId !== undefined && event.detail.householdId !== householdId) throw new Error('Scheduled analysis household does not match the configured household.');
   const asOf = event.detail?.asOf ? new Date(event.detail.asOf) : new Date();
