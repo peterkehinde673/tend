@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Tend — Ring webhook ingestion and scheduled routine-deviation analysis.
+
+Parameters:
+  RingWebhookHmacSecret:
+    Type: String
+    NoEcho: true
+    Description: HMAC secret configured for the Ring webhook integration.
+  BedrockModelId:
+    Type: String
+    Default: ''
+    Description: Optional Bedrock model ID. Leave empty to use the deterministic template reasoning fallback.
+  ScheduleExpression:
+    Type: String
+    Default: rate(15 minutes)
+    Description: How often EventBridge Scheduler invokes Tend analysis.
+
+Conditions:
+  BedrockConfigured: !Not [!Equals [!Ref BedrockModelId, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        EVENT_STORE: dynamodb
+        DYNAMODB_TABLE_NAME: !Ref TendEventsTable
+        AWS_REGION: !Ref AWS::Region
+        RING_WEBHOOK_HMAC_SECRET: !Ref RingWebhookHmacSecret
+        RING_EVENT_SOURCE: ring_real
+        RING_HOUSEHOLD_ID: ring-household-1
+        BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+
+Resources:
+  TendApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowMethods:
+          - POST
+        AllowOrigins:
+          - '*'
+
+  TendRuntimeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: dist/src/runtime/lambdaHandler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TendEventsTable
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:Converse
+              Resource: !If [BedrockConfigured, !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}', !Ref AWS::NoValue]
+      Events:
+        RingWebhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /webhooks/ring
+            Method: POST
+
+  TendAnalysisSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      FlexibleTimeWindow:
+        Mode: OFF
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Target:
+        Arn: !GetAtt TendRuntimeFunction.Arn
+        RoleArn: !GetAtt SchedulerExecutionRole.Arn
+        Input: '{"source":"tend.scheduler"}'
+
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeTendRuntime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt TendRuntimeFunction.Arn
+
+  TendEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Application
+          Value: Tend
+        - Key: DataClass
+          Value: normalized-household-events-only
+
+Outputs:
+  RingWebhookUrl:
+    Description: HTTPS endpoint to configure as the Ring webhook target.
+    Value: !Sub 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/webhooks/ring'
+  EventsTableName:
+    Description: DynamoDB table storing normalized Tend events.
+    Value: !Ref TendEventsTable
+  AnalysisFunctionName:
+    Description: Lambda function handling webhook and scheduled analysis invocations.
+    Value: !Ref TendRuntimeFunction
