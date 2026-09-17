@@ -15,7 +15,10 @@
     "analysis:check": "ts-node src/dev/analysisCheck.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.637.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.637.0",
+    "@aws-sdk/client-dynamodb": "^3.637.0",
+    "@aws-sdk/lib-dynamodb": "^3.637.0",
+    "@aws-sdk/client-sns": "^3.637.0"
   },
   "devDependencies": {
     "typescript": "^5.5.3",
