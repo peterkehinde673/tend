@@ -9,6 +9,7 @@ on:
       - phase-3-bedrock
       - phase-4-aws-runtime
       - phase-5-aws-deployment
+      - phase-6-production-hardening
   pull_request:
 
 permissions:
