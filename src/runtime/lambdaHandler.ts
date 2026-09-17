@@ -32,6 +32,9 @@ export async function handler(event: LambdaEvent): Promise<APIGatewayProxyResult
 async function handleHttpEvent(event: LambdaEvent): Promise<APIGatewayProxyResultV2> {
   const method = event.requestContext?.http?.method ?? '';
   const path = event.requestContext?.http?.path ?? '';
+  if (method === 'GET' && path === '/health') {
+    return jsonResponse(200, { status: 'ok', service: 'tend-runtime', eventStore: process.env.EVENT_STORE ?? 'in_memory' });
+  }
   if (method !== 'POST' || !['/webhooks/ring', '/feedback'].includes(path)) return jsonResponse(404, { error: 'Not found' });
   const rawBody = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : '';
   const signature = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-signature')?.[1];
