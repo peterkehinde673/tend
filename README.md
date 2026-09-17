@@ -479,7 +479,10 @@ service.
 - The analysis worker's anomaly-decision ordering (deterministic engine
   before reasoning, reasoning cannot override severity) is proven by a
   dedicated test using the real `BedrockReasoningService` safety contract.
-- 24 new Phase 4 tests pass, 219 total (up from 185 at the end of Phase 3).
+- 45 new Phase 4 tests pass, 230 total (up from 185 at the end of Phase 3) —
+  including comprehensive mocked CRUD/idempotency/pagination/data-
+  minimization coverage for `DynamoEventStore` against a self-contained
+  fake SDK module, not just its key-construction helpers.
 
 ### LIVE VERIFIED
 
@@ -492,9 +495,13 @@ service.
 - **No live DynamoDB call has ever succeeded from this environment** —
   the same `@aws-sdk/client-dynamodb`/`@aws-sdk/lib-dynamodb` packages
   cannot be installed here (registry blocked), so `DynamoEventStore`'s
-  real request/response shapes against an actual table have never been
-  exercised, only its key-construction logic and its genuine
-  SDK-unavailable failure path.
+  real request/response shapes against an actual AWS table have never been
+  exercised. Its CRUD/idempotency/pagination/data-minimization *logic* is
+  thoroughly tested against a self-contained fake SDK module (injected via
+  a `moduleLoader` constructor parameter added specifically for this) that
+  faithfully re-implements DynamoDB's Query/TransactWriteItems semantics —
+  this proves `DynamoEventStore`'s own code is correct, not that AWS's
+  real API behaves exactly as modeled.
 - No real DynamoDB table has ever been provisioned or queried.
 - The EventBridge Scheduler + Lambda deployment path is designed but not
   built or deployed in this phase.

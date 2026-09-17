@@ -46,16 +46,27 @@ import { DynamoEventStoreConfig } from './dynamoConfig';
  * carries that data (see domain/event.ts).
  */
 export class DynamoEventStore implements EventStore {
-  constructor(private readonly config: DynamoEventStoreConfig) {}
+  constructor(
+    private readonly config: DynamoEventStoreConfig,
+    /**
+     * Injectable module loader, defaulting to the real dynamic-import
+     * loader below. Exists so tests can supply a fake SDK module shape
+     * (fake DynamoDBClient/DynamoDBDocumentClient/QueryCommand/
+     * TransactWriteCommand) and exercise this class's actual CRUD/
+     * idempotency logic without needing the real, uninstallable AWS SDK
+     * package — see test/store/dynamoEventStore.test.ts.
+     */
+    private readonly moduleLoader: () => Promise<DynamoModulesShape> = loadDynamoModules,
+  ) {}
 
   private async getDocClient(): Promise<DynamoDocClientShape> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const baseClient = new sdk.DynamoDBClient({ region: this.config.region });
     return sdk.DynamoDBDocumentClient.from(baseClient) as DynamoDocClientShape;
   }
 
   async append(event: TendEvent): Promise<{ accepted: boolean; reason?: string }> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const client = await this.getDocClient();
 
     const pk = householdPartitionKey(event.householdId);
@@ -91,7 +102,7 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getByHousehold(householdId: string): Promise<TendEvent[]> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const client = await this.getDocClient();
     const pk = householdPartitionKey(householdId);
 
@@ -114,7 +125,7 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getByTimeRange(query: EventTimeRangeQuery): Promise<TendEvent[]> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const client = await this.getDocClient();
     const pk = householdPartitionKey(query.householdId);
 
@@ -145,7 +156,7 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getRecent(householdId: string, limit: number): Promise<TendEvent[]> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const client = await this.getDocClient();
     const pk = householdPartitionKey(householdId);
 
@@ -166,7 +177,7 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getByDevice(householdId: string, deviceId: string): Promise<TendEvent[]> {
-    const sdk = await loadDynamoModules();
+    const sdk = await this.moduleLoader();
     const client = await this.getDocClient();
     const pk = householdPartitionKey(householdId);
 
@@ -241,11 +252,11 @@ function extractCancellationReasons(err: unknown): CancellationReason[] | undefi
 
 // ---- dynamic SDK loading, mirroring bedrockClient.ts's established pattern ----
 
-interface DynamoDocClientShape {
+export interface DynamoDocClientShape {
   send: (command: unknown) => Promise<{ Items?: unknown[]; LastEvaluatedKey?: unknown }>;
 }
 
-interface DynamoModulesShape {
+export interface DynamoModulesShape {
   DynamoDBClient: new (opts: { region: string }) => unknown;
   DynamoDBDocumentClient: { from: (client: unknown) => unknown };
   QueryCommand: new (input: Record<string, unknown>) => unknown;

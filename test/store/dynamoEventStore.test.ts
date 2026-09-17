@@ -4,16 +4,18 @@ import { eventSortKey, householdPartitionKey, idempEventSortKey, idempRequestSor
 import { TendEvent } from '../../src/domain/event';
 
 /**
- * IMPORTANT: these tests exercise the pure key-construction helpers
- * directly (real code, no mocking needed) and the DynamoEventStore class's
- * SDK-unavailable failure path genuinely (the AWS SDK packages really
- * aren't installed in this sandboxed environment — see dynamoEventStore.ts
- * for why). Full CRUD behavior against a fake document client would
- * require the SDK's types to construct QueryCommand/TransactWriteCommand
- * instances; since the SDK cannot be installed here, that level of test is
- * left to an environment where the package can actually be installed —
- * this project does not fabricate a passing mock for code paths that
- * cannot be genuinely exercised without the real package's classes.
+ * These tests exercise the pure key-construction helpers directly (real
+ * code, no mocking needed) and the DynamoEventStore class's genuine
+ * SDK-unavailable failure path (the real AWS SDK packages really aren't
+ * installed in this sandboxed environment — see dynamoEventStore.ts for
+ * why) — i.e. what happens when no module loader is injected and the real
+ * dynamic import is attempted and fails.
+ *
+ * Full mocked CRUD behavior (append/query/pagination/idempotency/data
+ * minimization) against a fake, injected SDK module is covered separately
+ * in dynamoEventStoreCrud.test.ts, using the constructor's injectable
+ * `moduleLoader` parameter added specifically to make that level of
+ * testing possible without the real, uninstallable AWS SDK package.
  */
 
 function makeEvent(overrides: Partial<TendEvent> = {}): TendEvent {
