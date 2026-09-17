@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-31'
+AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Tend — Ring webhook ingestion, caregiver feedback, and scheduled routine-deviation analysis.
 
@@ -147,4 +147,4 @@ Outputs:
     Value: !Ref TendEventsTable
   AnalysisFunctionName:
     Description: Lambda function handling webhook, feedback, and scheduled analysis invocations.
-    Value: !Ref TendRuntimeFunction
+    Value: !GetAtt TendRuntimeFunction.Arn
