@@ -64,24 +64,24 @@ export class DynamoEventStore implements EventStore {
     return sdk.DynamoDBDocumentClient.from(baseClient) as DynamoDocClientShape;
   }
 
-  private async loadModules(): Promise<DynamoModulesShape> {
+  private async loadModules(context?: string): Promise<DynamoModulesShape> {
     try {
       return await this.moduleLoader();
     } catch (err) {
-      // Preserve the store's typed failure contract for alternate/injected
-      // loaders too. The default loader already throws DynamoOperationError,
-      // so avoid wrapping that error a second time.
-      if (err instanceof DynamoOperationError) throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      if (!context && err instanceof DynamoOperationError) throw err;
+      const prefix = context
+        ? `${context}: `
+        : 'Could not load "@aws-sdk/client-dynamodb"/"@aws-sdk/lib-dynamodb": ';
       throw new DynamoOperationError(
-        `Could not load \"@aws-sdk/client-dynamodb\"/\"@aws-sdk/lib-dynamodb\": ${(err as Error).message}. ` +
-          `These packages must be installed before any real DynamoDB call can be made.`,
+        `${prefix}${detail}${context ? '' : '. These packages must be installed before any real DynamoDB call can be made.'}`,
         err,
       );
     }
   }
 
   async append(event: TendEvent): Promise<{ accepted: boolean; reason?: string }> {
-    const sdk = await this.loadModules();
+    const sdk = await this.loadModules(`DynamoDB append failed for household ${event.householdId}`);
     const client = await this.getDocClient(sdk);
 
     const pk = householdPartitionKey(event.householdId);
