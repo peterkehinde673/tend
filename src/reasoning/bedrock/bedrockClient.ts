@@ -19,10 +19,10 @@ async function loadBedrockRuntimeModule(): Promise<BedrockRuntimeModuleShape> {
     return mod as BedrockRuntimeModuleShape;
   } catch (err) {
     throw new BedrockSdkUnavailableError(
-      `Could not load the "@aws-sdk/client-bedrock-runtime" package: ${(err as Error).message}. ` +
+      `Could not load the \"@aws-sdk/client-bedrock-runtime\" package: ${(err as Error).message}. ` +
         `This package must be installed (npm install) before any real Bedrock call can be made. ` +
         `In this project's own sandboxed development environment, installation is blocked by the network egress ` +
-        `policy — see README "AWS / Amazon Bedrock Integration" for the confirmed, reproducible reason.`,
+        `policy — see README \"AWS / Amazon Bedrock Integration\" for the confirmed, reproducible reason.`,
       err,
     );
   }
@@ -35,7 +35,20 @@ export class BedrockClient {
   ) {}
 
   async converse(systemPrompt: string, userMessage: string): Promise<string> {
-    const sdk = await this.moduleLoader();
+    let sdk: BedrockRuntimeModuleShape;
+    try {
+      sdk = await this.moduleLoader();
+    } catch (err) {
+      // Keep the public failure contract stable even when an injected loader
+      // fails directly (for example in tests or an alternate runtime loader).
+      // The default loader already returns this typed error, so do not wrap it twice.
+      if (err instanceof BedrockSdkUnavailableError) throw err;
+      throw new BedrockSdkUnavailableError(
+        `Could not load the \"@aws-sdk/client-bedrock-runtime\" package: ${(err as Error).message}. ` +
+          `This package must be installed (npm install) before any real Bedrock call can be made.`,
+        err,
+      );
+    }
 
     const client = new sdk.BedrockRuntimeClient({ region: this.config.region });
     const command = new sdk.ConverseCommand({
@@ -49,7 +62,7 @@ export class BedrockClient {
       response = await client.send(command);
     } catch (err) {
       throw new BedrockInvocationError(
-        `Bedrock Converse call failed for model "${this.config.modelId}" in region "${this.config.region}": ${(err as Error).message}`,
+        `Bedrock Converse call failed for model \"${this.config.modelId}\" in region \"${this.config.region}\": ${(err as Error).message}`,
         err,
       );
     }
