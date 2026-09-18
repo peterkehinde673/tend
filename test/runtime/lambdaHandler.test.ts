@@ -49,7 +49,7 @@ describe('runtime/lambdaHandler', () => {
     delete process.env.EVENT_STORE;
     delete process.env.AWS_REGION;
     delete process.env.BEDROCK_MODEL_ID;
-    delete process.env.RING_HOUSEHOLD_ID;
+    process.env.RING_HOUSEHOLD_ID = 'test-household';
 
     try {
       const result = await handler({
