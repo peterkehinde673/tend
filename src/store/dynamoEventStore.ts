@@ -59,15 +59,30 @@ export class DynamoEventStore implements EventStore {
     private readonly moduleLoader: () => Promise<DynamoModulesShape> = loadDynamoModules,
   ) {}
 
-  private async getDocClient(): Promise<DynamoDocClientShape> {
-    const sdk = await this.moduleLoader();
+  private async getDocClient(sdk: DynamoModulesShape): Promise<DynamoDocClientShape> {
     const baseClient = new sdk.DynamoDBClient({ region: this.config.region });
     return sdk.DynamoDBDocumentClient.from(baseClient) as DynamoDocClientShape;
   }
 
+  private async loadModules(): Promise<DynamoModulesShape> {
+    try {
+      return await this.moduleLoader();
+    } catch (err) {
+      // Preserve the store's typed failure contract for alternate/injected
+      // loaders too. The default loader already throws DynamoOperationError,
+      // so avoid wrapping that error a second time.
+      if (err instanceof DynamoOperationError) throw err;
+      throw new DynamoOperationError(
+        `Could not load \"@aws-sdk/client-dynamodb\"/\"@aws-sdk/lib-dynamodb\": ${(err as Error).message}. ` +
+          `These packages must be installed before any real DynamoDB call can be made.`,
+        err,
+      );
+    }
+  }
+
   async append(event: TendEvent): Promise<{ accepted: boolean; reason?: string }> {
-    const sdk = await this.moduleLoader();
-    const client = await this.getDocClient();
+    const sdk = await this.loadModules();
+    const client = await this.getDocClient(sdk);
 
     const pk = householdPartitionKey(event.householdId);
     const eventSk = eventSortKey(event.occurredAt, event.eventId);
@@ -102,8 +117,8 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getByHousehold(householdId: string): Promise<TendEvent[]> {
-    const sdk = await this.moduleLoader();
-    const client = await this.getDocClient();
+    const sdk = await this.loadModules();
+    const client = await this.getDocClient(sdk);
     const pk = householdPartitionKey(householdId);
 
     const items: Record<string, unknown>[] = [];
@@ -125,17 +140,10 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getByTimeRange(query: EventTimeRangeQuery): Promise<TendEvent[]> {
-    const sdk = await this.moduleLoader();
-    const client = await this.getDocClient();
+    const sdk = await this.loadModules();
+    const client = await this.getDocClient(sdk);
     const pk = householdPartitionKey(query.householdId);
 
-    // DynamoDB's KeyConditionExpression supports only ONE condition on the
-    // sort key, and BETWEEN is inclusive on both ends. Since this
-    // interface's contract is [fromIso inclusive, toIso EXCLUSIVE), we use
-    // BETWEEN for the efficient key-based read (bounded, no scan) and then
-    // apply a FilterExpression on the stored `occurredAt` attribute to
-    // enforce the exclusive upper bound — this is the standard technique
-    // for a half-open range query in DynamoDB.
     const result = await client.send(
       new sdk.QueryCommand({
         TableName: this.config.tableName,
@@ -144,7 +152,7 @@ export class DynamoEventStore implements EventStore {
         ExpressionAttributeValues: {
           ':pk': pk,
           ':from': eventSortKey(query.fromIso, ''),
-          ':to': eventSortKey(query.toIso, '\uffff'), // sorts after any eventId at exactly toIso
+          ':to': eventSortKey(query.toIso, '\uffff'),
           ':toIso': query.toIso,
           ...(query.deviceId ? { ':deviceId': query.deviceId } : {}),
         },
@@ -156,8 +164,8 @@ export class DynamoEventStore implements EventStore {
   }
 
   async getRecent(householdId: string, limit: number): Promise<TendEvent[]> {
-    const sdk = await this.moduleLoader();
-    const client = await this.getDocClient();
+    const sdk = await this.loadModules();
+    const client = await this.getDocClient(sdk);
     const pk = householdPartitionKey(householdId);
 
     const result = await client.send(
@@ -165,27 +173,20 @@ export class DynamoEventStore implements EventStore {
         TableName: this.config.tableName,
         KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
         ExpressionAttributeValues: { ':pk': pk, ':prefix': 'EVENT#' },
-        ScanIndexForward: false, // newest first
+        ScanIndexForward: false,
         Limit: limit,
       }),
     );
 
     const items = (result.Items as Record<string, unknown>[] | undefined) ?? [];
-    // Reverse to match InMemoryEventStore's convention: ascending by
-    // occurredAt, most recent last.
     return items.map(stripKeyAttributes).reverse();
   }
 
   async getByDevice(householdId: string, deviceId: string): Promise<TendEvent[]> {
-    const sdk = await this.moduleLoader();
-    const client = await this.getDocClient();
+    const sdk = await this.loadModules();
+    const client = await this.getDocClient(sdk);
     const pk = householdPartitionKey(householdId);
 
-    // Filtered after an efficient partition-scoped Query, not a table
-    // Scan. Not maximally efficient for a device-heavy access pattern —
-    // if this becomes a hot path, add a GSI on deviceId. No such need has
-    // been demonstrated yet, per the "avoid unnecessary secondary indexes"
-    // instruction, so this project does not add one speculatively.
     const items: Record<string, unknown>[] = [];
     let lastEvaluatedKey: Record<string, unknown> | undefined;
     do {
@@ -205,8 +206,6 @@ export class DynamoEventStore implements EventStore {
     return items.map(stripKeyAttributes);
   }
 }
-
-// ---- key helpers, exported for direct unit testing ----
 
 export function householdPartitionKey(householdId: string): string {
   return `HOUSEHOLD#${householdId}`;
@@ -250,8 +249,6 @@ function extractCancellationReasons(err: unknown): CancellationReason[] | undefi
   return undefined;
 }
 
-// ---- dynamic SDK loading, mirroring bedrockClient.ts's established pattern ----
-
 export interface DynamoDocClientShape {
   send: (command: unknown) => Promise<{ Items?: unknown[]; LastEvaluatedKey?: unknown }>;
 }
@@ -282,10 +279,10 @@ async function loadDynamoModules(): Promise<DynamoModulesShape> {
     };
   } catch (err) {
     throw new DynamoOperationError(
-      `Could not load "@aws-sdk/client-dynamodb"/"@aws-sdk/lib-dynamodb": ${(err as Error).message}. ` +
+      `Could not load \"@aws-sdk/client-dynamodb\"/\"@aws-sdk/lib-dynamodb\": ${(err as Error).message}. ` +
         `These packages must be installed before any real DynamoDB call can be made. In this project's own sandboxed ` +
-        `development environment, installation is blocked by the network egress policy — see README "AWS Runtime / ` +
-        `Persistent Event Store" for the confirmed, reproducible reason.`,
+        `development environment, installation is blocked by the network egress policy — see README \"AWS Runtime / ` +
+        `Persistent Event Store\" for the confirmed, reproducible reason.`,
       err,
     );
   }
