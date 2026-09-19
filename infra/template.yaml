@@ -53,7 +53,6 @@ Globals:
       Variables:
         EVENT_STORE: dynamodb
         DYNAMODB_TABLE_NAME: !Ref TendEventsTable
-        AWS_REGION: !Ref AWS::Region
 
         RING_WEBHOOK_HMAC_SECRET: !Ref RingWebhookHmacSecret
         RING_EVENT_SOURCE: ring_real
@@ -117,6 +116,7 @@ Resources:
                   - ModelId: !Ref BedrockModelId
                 - !Sub
                   - 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/__bedrock_disabled__'
+                  - {}
 
         # SNS notification access
         - Version: '2012-10-17'
@@ -129,6 +129,7 @@ Resources:
                 - !Ref TendNotificationTopic
                 - !Sub
                   - 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:__notifications_disabled__'
+                  - {}
 
       Events:
 
@@ -165,7 +166,7 @@ Resources:
 
     Properties:
       FlexibleTimeWindow:
-        Mode: OFF
+        Mode: 'OFF'
 
       ScheduleExpression: !Ref ScheduleExpression
 
