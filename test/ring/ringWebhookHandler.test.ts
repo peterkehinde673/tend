@@ -36,9 +36,14 @@ describe('ring/ringWebhookHandler: verifyRingSignature', () => {
     assert.equal(verifyRingSignature(body, sign(body), SECRET), true);
   });
 
+  test('accepts Ring documented X-Signature sha256= format', () => {
+    const body = validBody();
+    assert.equal(verifyRingSignature(body, `sha256=${sign(body)}`, SECRET), true);
+  });
+
   test('rejects a body with a tampered signature', () => {
     const body = validBody();
-    assert.equal(verifyRingSignature(body, sign(body) + 'ff', SECRET), false);
+    assert.equal(verifyRingSignature(body, sign(body).slice(0, -1) + 'f', SECRET), false);
   });
 
   test('rejects when the signature was computed with a different secret', () => {
@@ -57,9 +62,9 @@ describe('ring/ringWebhookHandler: verifyRingSignature', () => {
     assert.equal(verifyRingSignature(validBody(), undefined, SECRET), false);
   });
 
-  test('does not throw on a signature of a completely different length', () => {
-    assert.doesNotThrow(() => verifyRingSignature(validBody(), 'short', SECRET));
-    assert.equal(verifyRingSignature(validBody(), 'short', SECRET), false);
+  test('rejects malformed prefixed signatures', () => {
+    assert.equal(verifyRingSignature(validBody(), 'sha256=short', SECRET), false);
+    assert.equal(verifyRingSignature(validBody(), 'sha256=not-hex'.padEnd(71, '0'), SECRET), false);
   });
 });
 
@@ -104,6 +109,20 @@ describe('ring/ringWebhookHandler: handleRingWebhook — end to end', () => {
     assert.equal(stored[0].source, 'ring_real');
   });
 
+  test('accepts a validly signed Ring X-Signature header end to end', async () => {
+    const store = new InMemoryEventStore();
+    const body = validBody({}, NOW);
+    const result = await handleRingWebhook(body, `sha256=${sign(body)}`, store, {
+      householdId: 'house-1',
+      source: 'ring_real',
+      hmacSecret: SECRET,
+      now: NOW,
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.accepted, true);
+    assert.equal((await store.getByHousehold('house-1')).length, 1);
+  });
+
   test('returns 501 when no HMAC secret is configured, and stores nothing', async () => {
     const store = new InMemoryEventStore();
     const body = validBody({}, NOW);
@@ -145,7 +164,7 @@ describe('ring/ringWebhookHandler: handleRingWebhook — end to end', () => {
 
   test('returns 400 for a stale timestamp outside replay tolerance, even with a valid signature', async () => {
     const store = new InMemoryEventStore();
-    const staleTime = new Date('2026-09-14T00:00:00.000Z'); // hours before NOW
+    const staleTime = new Date('2026-09-14T00:00:00.000Z');
     const body = validBody({}, staleTime);
     const result = await handleRingWebhook(body, sign(body), store, {
       householdId: 'house-1',
@@ -178,7 +197,7 @@ describe('ring/ringWebhookHandler: handleRingWebhook — end to end', () => {
     assert.equal(first.status, 200);
     assert.equal(first.body.accepted, true);
     assert.equal(second.status, 200);
-    assert.equal(second.body.accepted, false); // acknowledged, but flagged as a duplicate, not stored again
+    assert.equal(second.body.accepted, false);
     assert.equal((await store.getByHousehold('house-1')).length, 1);
   });
 
