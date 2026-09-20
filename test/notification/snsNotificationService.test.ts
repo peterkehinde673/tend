@@ -38,3 +38,21 @@ test('SNS adapter publishes only the normalized notification content', async () 
   assert.match(input.Message as string, /Morning activity differs/);
   assert.doesNotMatch(input.Message as string, /raw|payload|secret/i);
 });
+
+test('SNS adapter does not publish when notifyRecommended is false', async () => {
+  FakeClient.published = [];
+  const service = new SnsNotificationService('arn:aws:sns:test:123:tend', async () => modules);
+  const result = await service.send({
+    householdId: 'household-1',
+    severity: 'NORMAL',
+    explanation: 'No meaningful deviation was observed.',
+    recommendedWording: 'No action needed.',
+    notifyRecommended: false,
+  });
+
+  assert.deepEqual(result, {
+    delivered: false,
+    reason: 'notifyRecommended was false; no notification sent by design.',
+  });
+  assert.equal(FakeClient.published.length, 0);
+});
