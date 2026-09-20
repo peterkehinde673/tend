@@ -11,6 +11,9 @@ export class SnsNotificationService implements NotificationService {
   ) {}
 
   async send(notification: DigestNotification): Promise<{ delivered: boolean; reason?: string }> {
+    if (!notification.notifyRecommended) {
+      return { delivered: false, reason: 'notifyRecommended was false; no notification sent by design.' };
+    }
     if (!this.topicArn) return { delivered: false, reason: 'SNS topic is not configured.' };
     const sdk = await this.moduleLoader();
     const client = new sdk.SNSClient({});

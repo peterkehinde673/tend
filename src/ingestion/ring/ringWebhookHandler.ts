@@ -6,35 +6,33 @@ import { normalizeRingWebhookEvent } from './ringNormalizer';
 
 /**
  * Verifies a Ring webhook's HMAC-SHA256 signature using a constant-time
- * comparison (crypto.timingSafeEqual), so response timing cannot leak
- * information about how much of the expected signature matched. The raw
- * request body (exact bytes, not a re-serialized/re-parsed version) MUST be
- * used to compute the signature — re-serializing JSON can change byte-for-
- * byte formatting and silently break verification, which is why this
- * function takes `rawBody: string` rather than a parsed object.
+ * comparison (crypto.timingSafeEqual). Ring sends the signature as
+ * `sha256=<hex-digest>` in X-Signature; the bare hex form is also accepted
+ * for backwards compatibility with Tend's existing local/dev callers.
+ *
+ * The raw request body (exact bytes, not a re-serialized/re-parsed version)
+ * MUST be used to compute the signature — re-serializing JSON can change
+ * byte-for-byte formatting and silently break verification.
  */
 export function verifyRingSignature(rawBody: string, signatureHeader: string | undefined, hmacSecret: string): boolean {
   if (!signatureHeader) return false;
 
   const expected = crypto.createHmac('sha256', hmacSecret).update(rawBody, 'utf8').digest('hex');
+  const provided = signatureHeader.startsWith('sha256=') ? signatureHeader.slice('sha256='.length) : signatureHeader;
+
+  // A SHA-256 hex digest is exactly 64 ASCII characters. Reject malformed
+  // values before the constant-time comparison rather than accepting an
+  // arbitrary same-length string.
+  if (!/^[0-9a-fA-F]{64}$/.test(provided)) return false;
 
   const expectedBuf = Buffer.from(expected, 'utf8');
-  const providedBuf = Buffer.from(signatureHeader, 'utf8');
-
-  // timingSafeEqual throws if buffer lengths differ — a length mismatch is
-  // itself a safe, immediate "not equal" rather than an exception path that
-  // could be distinguished by timing or by crashing the caller.
-  if (expectedBuf.length !== providedBuf.length) return false;
-
+  const providedBuf = Buffer.from(provided.toLowerCase(), 'utf8');
   return crypto.timingSafeEqual(expectedBuf, providedBuf);
 }
 
 /**
  * Basic replay/staleness check: rejects a webhook whose claimed `meta.time`
- * is further than `toleranceMs` from "now" in either direction. This limits
- * how useful a captured-and-replayed (but validly-signed) old payload can
- * be, without requiring any additional Ring-documented replay mechanism
- * (none is confirmed to exist beyond request_id idempotency).
+ * is further than `toleranceMs` from "now" in either direction.
  */
 export function isWithinReplayTolerance(claimedTimeIso: string, now: Date = new Date(), toleranceMs = 5 * 60 * 1000): boolean {
   const claimed = Date.parse(claimedTimeIso);
@@ -58,15 +56,8 @@ const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
 
 /**
  * Handles one inbound Ring webhook request end to end: size limit, HMAC
- * verification (constant-time), JSON parsing, replay/timestamp check,
- * schema validation + normalization (via ringNormalizer), and idempotent
- * storage (via the existing EventStore — the exact same store the
- * simulator writes to, since both converge on TendEvent). Returns a plain
- * {status, body} result so it can be unit-tested without an HTTP server,
- * and is wired into the dev server as the actual POST /webhooks/ring route.
- *
- * Never logs the raw body or the signature/secret. Only ever returns a
- * safe `reason` string on rejection — no internals, no payload contents.
+ * verification, JSON parsing, replay/timestamp check, schema validation +
+ * normalization, and idempotent storage.
  */
 export async function handleRingWebhook(
   rawBody: string,
@@ -79,11 +70,6 @@ export async function handleRingWebhook(
   }
 
   if (!options.hmacSecret) {
-    // Safe default: refuse to accept anything if no secret is configured,
-    // rather than accepting unverified webhook data. This is the "leave
-    // the webhook adapter ready but do not pretend it's live" behavior
-    // requested for environments (like this one) with no real Ring
-    // credentials configured.
     return { status: 501, body: { accepted: false, reason: 'Ring webhook verification is not configured (RING_WEBHOOK_HMAC_SECRET is unset).' } };
   }
 
@@ -110,9 +96,6 @@ export async function handleRingWebhook(
 
   const stored = await store.append(result.event);
   if (!stored.accepted) {
-    // A duplicate/replay by (eventId, requestId) is not an error — Ring's
-    // own documentation expects webhook consumers to be idempotent and to
-    // still acknowledge with 200, since Ring may retry a delivery.
     return { status: 200, body: { accepted: false, reason: stored.reason } };
   }
 
