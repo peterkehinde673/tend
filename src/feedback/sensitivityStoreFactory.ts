@@ -13,6 +13,14 @@ export function createSensitivityStore(): SensitivityStore {
 /** Small in-memory implementation used by tests and local development. */
 export class InMemorySensitivityStore implements SensitivityStore {
   private readonly state = new Map<string, import('../domain/feedback').SignalSensitivity>();
+  private readonly claimedFeedback = new Set<string>();
+
+  async claimFeedback(feedback: import('../domain/feedback').FeedbackEvent): Promise<boolean> {
+    const key = JSON.stringify({ householdId: feedback.householdId, deviationId: feedback.deviationId, feedbackType: feedback.feedbackType, affectedSignals: [...feedback.affectedSignals].sort(), timestamp: feedback.timestamp });
+    if (this.claimedFeedback.has(key)) return false;
+    this.claimedFeedback.add(key);
+    return true;
+  }
 
   async get(householdId: string, signal: string, config?: import('../config/config').TendConfig) {
     const key = `${householdId}::${signal}`;
