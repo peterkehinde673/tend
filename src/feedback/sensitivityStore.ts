@@ -1,4 +1,4 @@
-import { SignalSensitivity } from '../domain/feedback';
+import { FeedbackEvent, SignalSensitivity } from '../domain/feedback';
 import { TendConfig } from '../config/config';
 
 /**
@@ -8,4 +8,9 @@ import { TendConfig } from '../config/config';
 export interface SensitivityStore {
   get(householdId: string, signal: string, config?: TendConfig): Promise<SignalSensitivity>;
   put(sensitivity: SignalSensitivity): Promise<void>;
+  /**
+   * Atomically claims a feedback event for processing.
+   * Returns false when the exact feedback event was already processed.
+   */
+  claimFeedback(feedback: FeedbackEvent): Promise<boolean>;
 }
