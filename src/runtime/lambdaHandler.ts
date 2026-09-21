@@ -69,7 +69,8 @@ async function handleFeedbackHttp(rawBody: string, signature: string | undefined
   if (!payload.deviationId || typeof payload.deviationId !== 'string' || !isFeedbackType(payload.feedbackType) || !Array.isArray(payload.affectedSignals) || payload.affectedSignals.length === 0 || payload.affectedSignals.some((s) => typeof s !== 'string' || s.length === 0) || !payload.timestamp || Number.isNaN(Date.parse(payload.timestamp))) return jsonResponse(400, { accepted: false, reason: 'Invalid feedback payload.' });
   const feedback: FeedbackEvent = { householdId, deviationId: payload.deviationId, feedbackType: payload.feedbackType, affectedSignals: payload.affectedSignals, timestamp: payload.timestamp };
   const updated = await applyPersistentFeedback(createSensitivityStore(), feedback);
-  return jsonResponse(200, { accepted: true, updatedSignals: updated.map((item) => ({ signal: item.signal, multiplier: item.multiplier, lastUpdatedAt: item.lastUpdatedAt })) });
+  if (updated.length === 0) return jsonResponse(200, { accepted: true, duplicate: true, updatedSignals: [] });
+  return jsonResponse(200, { accepted: true, duplicate: false, updatedSignals: updated.map((item) => ({ signal: item.signal, multiplier: item.multiplier, lastUpdatedAt: item.lastUpdatedAt })) });
 }
 
 async function handleScheduledEvent(event: LambdaEvent): Promise<ScheduledResult> {
