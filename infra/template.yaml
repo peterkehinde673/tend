@@ -172,6 +172,10 @@ Resources:
     Type: AWS::Scheduler::Schedule
 
     Properties:
+      # Give the schedule a deterministic name so its ARN can be used
+      # to scope the scheduler execution role's trust policy.
+      Name: !Sub '${AWS::StackName}-analysis'
+
       FlexibleTimeWindow:
         Mode: 'OFF'
 
@@ -205,6 +209,16 @@ Resources:
 
             Action:
               - sts:AssumeRole
+
+            # Prevent an unrelated Scheduler schedule in this account
+            # from assuming Tend's execution role.
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub
+                  - 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${AWS::StackName}-analysis'
+                  - {}
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
 
       Policies:
         - PolicyName: InvokeTendRuntime
@@ -308,7 +322,7 @@ Outputs:
       - {}
 
   HealthUrl:
-    Description: Runtime health endpoint.
+    Description: HTTPS endpoint for the runtime health endpoint.
     Value: !Sub
       - 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/health'
       - {}
