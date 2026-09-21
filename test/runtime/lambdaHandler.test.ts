@@ -25,9 +25,31 @@ describe('runtime/lambdaHandler', () => {
     });
   });
 
+  test('fails closed when deployed household identity is absent', async () => {
+    const previousHousehold = process.env.RING_HOUSEHOLD_ID;
+    delete process.env.RING_HOUSEHOLD_ID;
+    try {
+      const result = await handler({
+        requestContext: { http: { method: 'POST', path: '/webhooks/ring' } },
+        body: JSON.stringify({ meta: { version: '1' } }),
+      });
+
+      assert.equal(result.statusCode, 503);
+      assert.deepEqual(JSON.parse(result.body), {
+        accepted: false,
+        reason: 'Household identity is not configured.',
+      });
+    } finally {
+      if (previousHousehold === undefined) delete process.env.RING_HOUSEHOLD_ID;
+      else process.env.RING_HOUSEHOLD_ID = previousHousehold;
+    }
+  });
+
   test('returns the existing safe-deny webhook response when HMAC configuration is absent', async () => {
     const previousSecret = process.env.RING_WEBHOOK_HMAC_SECRET;
+    const previousHousehold = process.env.RING_HOUSEHOLD_ID;
     delete process.env.RING_WEBHOOK_HMAC_SECRET;
+    process.env.RING_HOUSEHOLD_ID = 'test-household';
     try {
       const result = await handler({
         requestContext: { http: { method: 'POST', path: '/webhooks/ring' } },
@@ -38,6 +60,8 @@ describe('runtime/lambdaHandler', () => {
     } finally {
       if (previousSecret === undefined) delete process.env.RING_WEBHOOK_HMAC_SECRET;
       else process.env.RING_WEBHOOK_HMAC_SECRET = previousSecret;
+      if (previousHousehold === undefined) delete process.env.RING_HOUSEHOLD_ID;
+      else process.env.RING_HOUSEHOLD_ID = previousHousehold;
     }
   });
 
@@ -79,7 +103,9 @@ describe('runtime/lambdaHandler', () => {
 
   test('accepts base64-encoded HTTP bodies before handing them to the Ring adapter', async () => {
     const previousSecret = process.env.RING_WEBHOOK_HMAC_SECRET;
+    const previousHousehold = process.env.RING_HOUSEHOLD_ID;
     delete process.env.RING_WEBHOOK_HMAC_SECRET;
+    process.env.RING_HOUSEHOLD_ID = 'test-household';
     try {
       const body = JSON.stringify({ meta: { version: '1' } });
       const result = await handler({
@@ -92,6 +118,8 @@ describe('runtime/lambdaHandler', () => {
     } finally {
       if (previousSecret === undefined) delete process.env.RING_WEBHOOK_HMAC_SECRET;
       else process.env.RING_WEBHOOK_HMAC_SECRET = previousSecret;
+      if (previousHousehold === undefined) delete process.env.RING_HOUSEHOLD_ID;
+      else process.env.RING_HOUSEHOLD_ID = previousHousehold;
     }
   });
 });
