@@ -13,6 +13,9 @@ export async function applyPersistentFeedback(
   feedback: FeedbackEvent,
   config: TendConfig = DEFAULT_CONFIG,
 ): Promise<SignalSensitivity[]> {
+  const claimed = await store.claimFeedback(feedback);
+  if (!claimed) return [];
+
   const results: SignalSensitivity[] = [];
 
   for (const signal of feedback.affectedSignals) {
