@@ -24,6 +24,13 @@ async function run(): Promise<void> {
   );
   assert.equal(first[0].multiplier, 1.1, 'first feedback should apply one minimal nudge');
 
+  const duplicate = await applyPersistentFeedback(
+    store,
+    feedback('not_useful', '2026-01-01T10:00:00.000Z'),
+    DEFAULT_CONFIG,
+  );
+  assert.deepEqual(duplicate, [], 'an exact replay must be a no-op');
+
   const second = await applyPersistentFeedback(
     store,
     feedback('not_useful', '2026-01-02T10:00:00.000Z'),

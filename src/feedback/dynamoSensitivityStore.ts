@@ -1,4 +1,5 @@
-import { SignalSensitivity } from '../domain/feedback';
+import { createHash } from 'node:crypto';
+import { FeedbackEvent, SignalSensitivity } from '../domain/feedback';
 import { DEFAULT_CONFIG, TendConfig } from '../config/config';
 import { DynamoEventStoreConfig } from '../store/dynamoConfig';
 import { SensitivityStore } from './sensitivityStore';
@@ -39,6 +40,26 @@ export class DynamoSensitivityStore implements SensitivityStore {
     };
   }
 
+  async claimFeedback(feedback: FeedbackEvent): Promise<boolean> {
+    const sdk = await this.moduleLoader();
+    const client = await this.getClient(sdk);
+    const key = {
+      pk: householdPartitionKey(feedback.householdId),
+      sk: feedbackClaimSortKey(feedback),
+    };
+    try {
+      await client.send(new sdk.PutCommand({
+        TableName: this.config.tableName,
+        Item: key,
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }));
+      return true;
+    } catch (err) {
+      if (isConditionalCheckFailure(err)) return false;
+      throw err;
+    }
+  }
+
   async put(sensitivity: SignalSensitivity): Promise<void> {
     const sdk = await this.moduleLoader();
     const client = await this.getClient(sdk);
@@ -64,6 +85,20 @@ export function householdPartitionKey(householdId: string): string {
 
 export function sensitivitySortKey(signal: string): string {
   return `SENSITIVITY#${signal}`;
+}
+
+export function feedbackClaimSortKey(feedback: FeedbackEvent): string {
+  const canonical = JSON.stringify({
+    deviationId: feedback.deviationId,
+    feedbackType: feedback.feedbackType,
+    affectedSignals: [...feedback.affectedSignals].sort(),
+    timestamp: feedback.timestamp,
+  });
+  return `FEEDBACK#${createHash('sha256').update(canonical).digest('hex')}`;
+}
+
+function isConditionalCheckFailure(err: unknown): boolean {
+  return !!err && typeof err === 'object' && 'name' in err && (err as { name?: unknown }).name === 'ConditionalCheckFailedException';
 }
 
 function stripKeys(item: Record<string, unknown>): SignalSensitivity {
