@@ -79,10 +79,9 @@ only), `eventId`/`requestId` (idempotency), `eventType`, optional `subType`
 of any Ring payload), `occurredAt`/`ingestedAt`, and a mandatory `source`.
 
 **`source` is always one of:**
-- `ring_real` — a genuine Ring account/device, not yet implemented.
-- `ring_playground` — Ring's official Developer Playground, not yet implemented.
-- `dev_simulator` — this repository's own deterministic generator. **This is
-  the only source currently wired up.**
+- `ring_real` — genuine Ring account/device source.
+- `ring_playground` — Ring Developer Playground source.
+- `dev_simulator` — this repository's deterministic development generator.
 
 No image/video/audio data, no facial embeddings, and no biometric fields
 exist anywhere in this model.
@@ -806,42 +805,31 @@ replace the vendored `@types/node` copy.
 
 ## Current limitations
 
-- No live Ring API call has ever succeeded from this development
-  environment — see "Phase 2: what was actually verified" above for the
-  exact, checkable reason (sandbox egress policy, confirmed via direct
-  `curl`), and no Ring Playground event source or webhook delivery has
-  been confirmed either.
-- No AWS deployment infrastructure actually deployed (Lambda, API Gateway,
-  EventBridge Scheduler, SNS, SES, Step Functions) — `DynamoEventStore`
-  and the analysis worker are implemented and locally tested, but no real
-  AWS resources have been provisioned; explicitly out of scope for this
-  phase per the "avoid overbuilding infrastructure" instruction.
-- No live Bedrock or DynamoDB API call has ever succeeded from this
-  environment — see "AWS / Amazon Bedrock Integration" and "AWS Runtime /
-  Persistent Event Store" above for the exact, checkable reason
-  (`@aws-sdk/*` packages cannot be installed here; the npm registry is
-  blocked by the same egress policy documented for Ring). Both adapters
-  are real, tested against mocks/fakes, and degrade gracefully, but
-  neither has been proven end-to-end against a live AWS account.
-- No authentication/authorization on the dev server — it's explicitly a
-  local development tool, not exposed infrastructure.
-- `SensitivityStore` (caregiver feedback) still resets on restart even
-  when `EVENT_STORE=dynamodb` — only the event store itself was made
-  persistent this phase; feedback persistence is a natural next step
-  using the same `DynamoEventStore` pattern.
-- The `deviation_missing` vs `sequence_deviation` calibration property noted
-  above is a known open tuning question, not a defect being hidden.
-- `zoneId` is currently assigned directly by the simulator; a real
-  integration needs a household-onboarding step to map real Ring
-  `deviceId`s to human-meaningful zone names, since Ring's webhook payloads
-  don't include this.
-- The Ring Partner API's `GET /v1/users/me` response shape remains
-  unconfirmed/unused. The Event History endpoint's path/vocabulary is now
-  corroborated by a real-developer community-forum report (see above) but
-  still not by an Amazon-authored documentation page directly.
-- No GitHub remote is configured in this development environment, and
-  `github.com` is blocked by the same egress policy as everything else —
-  confirmed directly via `curl` (`x-deny-reason: host_not_allowed`) and
-  `git ls-remote`. All Phase 4 work exists only as local commits on
-  `phase-4-aws-runtime`; pushing requires an environment with actual
-  GitHub network access and configured credentials.
+- A deployed AWS stack exists, but resource-level deployment health is not the same as proof of an end-to-end Ring event or successful Bedrock inference.
+- Live Ring webhook delivery and live Ring Playground behavior should be treated as unverified until exercised against the actual portal/account/device.
+- A successful live Bedrock Converse call should be verified separately in an AWS-authenticated environment.
+- The development environment historically had restricted npm/GitHub network access, so several AWS SDK paths were tested through injected fakes rather than a live AWS account.
+- The dev server is intentionally not an authenticated production endpoint.
+- The simulator currently assigns zone IDs directly; real onboarding needs household-specific mapping from Ring device IDs to meaningful zones.
+- The deviation calibration scenario remains an explicit tuning question rather than a hidden defect.
+- Secrets and credentials must remain outside source control.
+
+## License
+
+This repository is released under the MIT License. See `LICENSE`.
+
+## Submission verification
+
+Before describing the full system as live end-to-end, verify independently:
+
+1. deployed `GET /health` returns HTTP 200;
+2. a signed Ring webhook is accepted and persisted;
+3. a Ring replay is rejected/idempotent;
+4. caregiver feedback changes sensitivity once;
+5. replayed caregiver feedback is a no-op;
+6. EventBridge invokes scheduled analysis;
+7. a real Bedrock request succeeds if Bedrock is included in the demo;
+8. SNS only publishes when `notifyRecommended` is true;
+9. logs contain no secrets or raw Ring payloads.
+
+Only completed checks should be presented as live integration evidence in the hackathon submission.
