@@ -13,6 +13,14 @@ Parameters:
       HMAC secret used to authenticate Ring webhooks
       and caregiver feedback requests.
 
+  RingHouseholdId:
+    Type: String
+    MinLength: 1
+    MaxLength: 128
+    Description: >
+      Household identifier that this deployed Tend runtime is authorized
+      to process. This must be supplied explicitly for each deployment.
+
   BedrockModelId:
     Type: String
     Default: ''
@@ -56,7 +64,7 @@ Globals:
 
         RING_WEBHOOK_HMAC_SECRET: !Ref RingWebhookHmacSecret
         RING_EVENT_SOURCE: ring_real
-        RING_HOUSEHOLD_ID: ring-household-1
+        RING_HOUSEHOLD_ID: !Ref RingHouseholdId
 
         BEDROCK_MODEL_ID: !Ref BedrockModelId
 
