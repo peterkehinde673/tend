@@ -14,6 +14,12 @@ describe('infra/template.yaml: production security invariants', () => {
     assert.match(template, /RingWebhookHmacSecret:\s*\n\s*Type:\s*String\s*\n\s*NoEcho:\s*true/);
   });
 
+  test('requires an explicit deployed household identity and wires it into the runtime', () => {
+    assert.match(template, /RingHouseholdId:\s*\n\s*Type:\s*String\s*\n\s*MinLength:\s*1\s*\n\s*MaxLength:\s*128/);
+    assert.match(template, /RING_HOUSEHOLD_ID:\s*!Ref RingHouseholdId/);
+    assert.doesNotMatch(template, /RING_HOUSEHOLD_ID:\s*ring-household-1/);
+  });
+
   test('keeps runtime DynamoDB permissions limited to the application table', () => {
     assert.match(template, /dynamodb:GetItem/);
     assert.match(template, /dynamodb:PutItem/);
