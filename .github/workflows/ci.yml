@@ -1,0 +1,41 @@
+name: Tend CI
+
+on:
+  push:
+    branches:
+      - main
+      - phase-*
+  pull_request:
+    branches:
+      - main
+      - phase-*
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Phase 5 deterministic integration check
+        run: npm run phase5:check
