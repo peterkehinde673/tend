@@ -13,7 +13,8 @@
     "dev:demo": "ts-node src/dev/demo.ts",
     "ring:check": "ts-node src/dev/ringCheck.ts",
     "bedrock:check": "ts-node src/dev/bedrockCheck.ts",
-    "analysis:check": "ts-node src/dev/analysisCheck.ts"
+    "analysis:check": "ts-node src/dev/analysisCheck.ts",
+    "release:check": "ts-node src/dev/releaseCheck.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.637.0",
