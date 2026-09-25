@@ -12,6 +12,7 @@ on:
       - phase-6-production-hardening
       - phase-7-security-hardening
       - phase-9-production-readiness
+      - phase-10-release-integration
   pull_request:
 
 permissions:
@@ -28,9 +29,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
