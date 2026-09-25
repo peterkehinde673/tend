@@ -2,7 +2,7 @@
   "name": "tend",
   "version": "0.1.0",
   "private": true,
-  "description": "Tend — Explainable Routine-Deviation Reasoning",
+  "description": "Tend — explainable household routine-deviation reasoning with Ring ingestion, AWS-ready persistence, Bedrock reasoning, and deterministic safety boundaries",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -14,7 +14,8 @@
     "ring:check": "ts-node src/dev/ringCheck.ts",
     "bedrock:check": "ts-node src/dev/bedrockCheck.ts",
     "analysis:check": "ts-node src/dev/analysisCheck.ts",
-    "release:check": "ts-node src/dev/releaseCheck.ts"
+    "release:check": "ts-node src/dev/releaseCheck.ts",
+    "phase5:check": "ts-node src/dev/phase5Check.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.637.0",
