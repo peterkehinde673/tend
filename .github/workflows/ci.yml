@@ -43,6 +43,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Phase 10 release readiness check
+        run: npm run release:check
+
       - name: Validate SAM template
         uses: aws-actions/setup-sam@v2
         with:
