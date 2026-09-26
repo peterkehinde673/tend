@@ -6,23 +6,20 @@
  * only packages already available locally (Node's standard library,
  * TypeScript, ts-node) can be used. Before real deployment, this should be
  * replaced by (or fronted by) API Gateway + Lambda per the approved AWS
- * architecture — this server exists solely to let a human click through the
- * engine locally and to give the CLI demo a browsable counterpart.
+ * architecture — this server exists to run the local Tend demo/dashboard.
  *
  * Endpoints:
+ *   GET /                -> redirects to the polished local dashboard
+ *   GET /dashboard       -> polished local dashboard backed by /demo
  *   GET /health          -> liveness check
- *   GET /demo            -> full snapshot (baseline + deviation + reasoning + events), same data the CLI prints
+ *   GET /demo            -> full snapshot (baseline + deviation + reasoning + events)
  *   GET /events          -> recent normalized events (source-tagged)
  *   GET /baseline        -> the current household baseline
  *   GET /deviation       -> the current deviation result
  *   GET /reasoning       -> the current reasoning-layer output
- *   POST /scenario       -> { "scenario": "normal" | "deviation_missing" | "variable_normal" | "sequence_deviation" } — regenerates "today"
+ *   POST /scenario       -> { "scenario": "normal" | "deviation_missing" | "variable_normal" | "sequence_deviation" }
  *   POST /feedback       -> { "feedbackType": "expected" | "not_useful" | "keep_watching" | "unusual", "signals": string[] }
- *   POST /webhooks/ring  -> Ring Partner API webhook receiver (see ringWebhookHandler.ts). Stores into a SEPARATE
- *                           event store from the simulator/demo data above — Ring-sourced events never mix with
- *                           simulator-sourced events. Returns 501 unless RING_WEBHOOK_HMAC_SECRET is configured;
- *                           this project has not verified that anything (Playground or otherwise) actually
- *                           delivers webhooks to this route in the current environment — see README.
+ *   POST /webhooks/ring  -> Ring Partner API webhook receiver
  */
 import * as http from 'node:http';
 import { URL } from 'node:url';
@@ -32,6 +29,7 @@ import { isFeedbackType } from '../domain/feedback';
 import { createEventStore } from '../store/eventStoreFactory';
 import { handleRingWebhook } from '../ingestion/ring/ringWebhookHandler';
 import { TendEventSource } from '../domain/event';
+import { DASHBOARD_HTML } from './dashboard';
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -61,6 +59,15 @@ function sendJson(res: http.ServerResponse, statusCode: number, body: unknown): 
   res.end(payload);
 }
 
+function sendHtml(res: http.ServerResponse, statusCode: number, html: string): void {
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Length': Buffer.byteLength(html),
+  });
+  res.end(html);
+}
+
 function readRequestBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -84,6 +91,20 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+
+    if (req.method === 'GET' && url.pathname === '/') {
+      res.writeHead(302, {
+        Location: '/dashboard',
+        'Cache-Control': 'no-store',
+      });
+      res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/dashboard') {
+      sendHtml(res, 200, DASHBOARD_HTML);
+      return;
+    }
 
     if (req.method === 'GET' && url.pathname === '/health') {
       sendJson(res, 200, {
@@ -174,7 +195,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    sendJson(res, 404, { error: 'Not found', hint: 'GET /health, /demo, /events, /baseline, /deviation, /reasoning; POST /scenario, /feedback, /webhooks/ring' });
+    sendJson(res, 404, {
+      error: 'Not found',
+      hint: 'GET /, /dashboard, /health, /demo, /events, /baseline, /deviation, /reasoning; POST /scenario, /feedback, /webhooks/ring',
+    });
   } catch (err) {
     // Never leak stack traces or internals that might include secrets;
     // this dev server holds no secrets today, but keep the habit from day one.
@@ -186,5 +210,7 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Tend dev server (NOT production infrastructure) listening on http://localhost:${PORT}`);
   // eslint-disable-next-line no-console
-  console.log('All data is from the development simulator (source: dev_simulator) — no real Ring account is connected.');
+  console.log('Open http://localhost:' + PORT + '/dashboard for the polished Tend dashboard.');
+  // eslint-disable-next-line no-console
+  console.log('All demo data comes from the development simulator (source: dev_simulator) — no real Ring account is connected.');
 });
