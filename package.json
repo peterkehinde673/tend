@@ -7,21 +7,26 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pretest": "tsc -p tsconfig.json",
+    "pretest": "npm run build",
     "test": "node --test $(find dist/test -name '*.test.js')",
     "dev:server": "ts-node src/dev/server.ts",
     "dev:demo": "ts-node src/dev/demo.ts",
     "ring:check": "ts-node src/dev/ringCheck.ts",
     "bedrock:check": "ts-node src/dev/bedrockCheck.ts",
     "analysis:check": "ts-node src/dev/analysisCheck.ts",
+    "release:check": "ts-node src/dev/releaseCheck.ts",
     "phase5:check": "ts-node src/dev/phase5Check.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.637.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.637.0",
+    "@aws-sdk/client-dynamodb": "^3.637.0",
+    "@aws-sdk/client-sns": "^3.637.0",
+    "@aws-sdk/lib-dynamodb": "^3.637.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.3",
+    "@types/node": "^20.14.10",
+    "esbuild": "^0.28.2",
     "ts-node": "^10.9.2",
-    "@types/node": "^20.14.10"
+    "typescript": "^5.5.3"
   }
 }

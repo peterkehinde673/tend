@@ -6,13 +6,10 @@ import { BedrockSdkUnavailableError } from '../../src/reasoning/bedrock/bedrockT
 const FAKE_CONFIG = { region: 'us-east-1', modelId: 'fake-model-id' };
 
 describe('bedrock/bedrockClient: SDK-unavailable path — this is a REAL test, not mocked', () => {
-  test('converse() throws BedrockSdkUnavailableError because @aws-sdk/client-bedrock-runtime is genuinely not installed in this environment', async () => {
-    // IMPORTANT: unlike every other Bedrock test in this project, this one
-    // is NOT mocking anything — @aws-sdk/client-bedrock-runtime really is
-    // absent from node_modules in this sandboxed environment (npm registry
-    // access is blocked; see README), so this test genuinely exercises the
-    // dynamic-import failure path end to end.
-    const client = new BedrockClient(FAKE_CONFIG);
+  test('converse() throws BedrockSdkUnavailableError when the SDK loader fails', async () => {
+    const client = new BedrockClient(FAKE_CONFIG, async () => {
+      throw new Error('simulated missing package');
+    });
     await assert.rejects(
       () => client.converse('system prompt', 'user message'),
       (err: unknown) => {
@@ -24,7 +21,9 @@ describe('bedrock/bedrockClient: SDK-unavailable path — this is a REAL test, n
   });
 
   test('the SDK-unavailable error never includes the system prompt or user message content', async () => {
-    const client = new BedrockClient(FAKE_CONFIG);
+    const client = new BedrockClient(FAKE_CONFIG, async () => {
+      throw new Error('simulated missing package');
+    });
     try {
       await client.converse('SENSITIVE_SYSTEM_PROMPT_MARKER', 'SENSITIVE_USER_MESSAGE_MARKER');
       assert.fail('expected converse() to throw');

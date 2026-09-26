@@ -1,0 +1,350 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Tend — Ring webhook ingestion, caregiver feedback,
+  and scheduled routine-deviation analysis.
+
+Parameters:
+  RingWebhookHmacSecret:
+    Type: String
+    NoEcho: true
+    Description: >
+      HMAC secret used to authenticate Ring webhooks
+      and caregiver feedback requests.
+
+  RingHouseholdId:
+    Type: String
+    MinLength: 1
+    MaxLength: 128
+    Description: >
+      Household identifier that this deployed Tend runtime is authorized
+      to process. This must be supplied explicitly for each deployment.
+
+  BedrockModelId:
+    Type: String
+    Default: ''
+    Description: >
+      Optional Bedrock model ID. Leave empty to use
+      the deterministic template reasoning fallback.
+
+  ScheduleExpression:
+    Type: String
+    Default: rate(15 minutes)
+    Description: How often EventBridge Scheduler invokes Tend analysis.
+
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: >
+      Optional email subscription for Tend notifications.
+      Leave empty to disable SNS email delivery.
+
+Conditions:
+  BedrockConfigured: !Not
+    - !Equals
+      - !Ref BedrockModelId
+      - ''
+
+  NotificationsConfigured: !Not
+    - !Equals
+      - !Ref NotificationEmail
+      - ''
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 30
+    MemorySize: 512
+
+    Environment:
+      Variables:
+        EVENT_STORE: dynamodb
+        DYNAMODB_TABLE_NAME: !Ref TendEventsTable
+
+        RING_WEBHOOK_HMAC_SECRET: !Ref RingWebhookHmacSecret
+        RING_EVENT_SOURCE: ring_real
+        RING_HOUSEHOLD_ID: !Ref RingHouseholdId
+
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+
+        TEND_SNS_TOPIC_ARN: !If
+          - NotificationsConfigured
+          - !Ref TendNotificationTopic
+          - ''
+
+Resources:
+
+  # ------------------------------------------------------------
+  # HTTP API
+  # ------------------------------------------------------------
+
+  TendApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+
+  # ------------------------------------------------------------
+  # Tend Lambda runtime
+  # ------------------------------------------------------------
+
+  TendRuntimeFunction:
+    Type: AWS::Serverless::Function
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/runtime/lambdaHandler.ts
+        Bundle: true
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+    Properties:
+      CodeUri: ../
+      Handler: src/runtime/lambdaHandler.handler
+
+      Policies:
+
+        # Least-privilege access for the single-table event/sensitivity store.
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:TransactWriteItems
+              Resource: !GetAtt TendEventsTable.Arn
+
+        # Bedrock access
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:Converse
+              Resource: !If
+                - BedrockConfigured
+                - !Sub
+                  - 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${ModelId}'
+                  - ModelId: !Ref BedrockModelId
+                - !Sub
+                  - 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/__bedrock_disabled__'
+                  - {}
+
+        # SNS notification access
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !If
+                - NotificationsConfigured
+                - !Ref TendNotificationTopic
+                - !Sub
+                  - 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:__notifications_disabled__'
+                  - {}
+
+      Events:
+
+        # GET /health
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /health
+            Method: GET
+
+        # POST /webhooks/ring
+        RingWebhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /webhooks/ring
+            Method: POST
+
+        # POST /feedback
+        CaregiverFeedback:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TendApi
+            Path: /feedback
+            Method: POST
+
+  # ------------------------------------------------------------
+  # Scheduled analysis
+  # ------------------------------------------------------------
+
+  TendAnalysisSchedule:
+    Type: AWS::Scheduler::Schedule
+
+    Properties:
+      # Give the schedule a deterministic name so its ARN can be used
+      # to scope the scheduler execution role's trust policy.
+      Name: !Sub '${AWS::StackName}-analysis'
+
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+
+      ScheduleExpression: !Ref ScheduleExpression
+
+      State: ENABLED
+
+      Target:
+        Arn: !GetAtt TendRuntimeFunction.Arn
+        RoleArn: !GetAtt SchedulerExecutionRole.Arn
+
+        Input: '{"source":"tend.scheduler"}'
+
+  # ------------------------------------------------------------
+  # EventBridge Scheduler execution role
+  # ------------------------------------------------------------
+
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+
+        Statement:
+          - Effect: Allow
+
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+            # Prevent an unrelated Scheduler schedule in this account
+            # from assuming Tend's execution role.
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub
+                  - 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${AWS::StackName}-analysis'
+                  - {}
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+      Policies:
+        - PolicyName: InvokeTendRuntime
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+
+                Action:
+                  - lambda:InvokeFunction
+
+                Resource:
+                  - !GetAtt TendRuntimeFunction.Arn
+
+  # ------------------------------------------------------------
+  # DynamoDB persistent event store
+  # ------------------------------------------------------------
+
+  TendEventsTable:
+    Type: AWS::DynamoDB::Table
+
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+
+        - AttributeName: sk
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+
+        - AttributeName: sk
+          KeyType: RANGE
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Application
+          Value: Tend
+
+        - Key: DataClass
+          Value: normalized-household-events-and-feedback-state
+
+  # ------------------------------------------------------------
+  # SNS notification topic
+  # ------------------------------------------------------------
+
+  TendNotificationTopic:
+    Type: AWS::SNS::Topic
+
+    Properties:
+      TopicName: !Sub 'tend-notifications-${AWS::StackName}'
+
+      Tags:
+        - Key: Application
+          Value: Tend
+
+        - Key: DataClass
+          Value: normalized-notification-content
+
+  # ------------------------------------------------------------
+  # Optional SNS email subscription
+  # ------------------------------------------------------------
+
+  TendNotificationSubscription:
+    Type: AWS::SNS::Subscription
+
+    Condition: NotificationsConfigured
+
+    Properties:
+      TopicArn: !Ref TendNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+# --------------------------------------------------------------
+# Outputs
+# --------------------------------------------------------------
+
+Outputs:
+
+  RingWebhookUrl:
+    Description: HTTPS endpoint to configure as the Ring webhook target.
+    Value: !Sub
+      - 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/webhooks/ring'
+      - {}
+
+  CaregiverFeedbackUrl:
+    Description: HTTPS endpoint for authenticated caregiver feedback.
+    Value: !Sub
+      - 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/feedback'
+      - {}
+
+  HealthUrl:
+    Description: HTTPS endpoint for the runtime health endpoint.
+    Value: !Sub
+      - 'https://${TendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/health'
+      - {}
+
+  EventsTableName:
+    Description: DynamoDB table storing normalized Tend events and sensitivity state.
+    Value: !Ref TendEventsTable
+
+  AnalysisFunctionName:
+    Description: >
+      Lambda function handling webhook, feedback,
+      and scheduled analysis invocations.
+    Value: !GetAtt TendRuntimeFunction.Arn
+
+  NotificationTopicArn:
+    Description: SNS topic used for optional Tend notifications.
+    Value: !Ref TendNotificationTopic

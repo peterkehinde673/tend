@@ -1,0 +1,54 @@
+name: Tend CI
+
+on:
+  push:
+    branches:
+      - main
+      - phase-1-core
+      - phase-2-ring-integration
+      - phase-3-bedrock
+      - phase-4-aws-runtime
+      - phase-5-aws-deployment
+      - phase-6-production-hardening
+      - phase-7-security-hardening
+      - phase-9-production-readiness
+      - phase-10-release-integration
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Phase 10 release readiness check
+        run: npm run release:check
+
+      - name: Validate SAM template
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - name: SAM validate
+        run: sam validate --template-file infra/template.yaml --lint
