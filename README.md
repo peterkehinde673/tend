@@ -136,6 +136,32 @@ The infrastructure is designed so deployment requires an explicit household iden
 
 The AWS resources are implemented and validated through infrastructure checks; live deployment remains deployment-environment dependent.
 
+## Local dashboard
+
+Tend includes a polished browser dashboard for the local demo at:
+
+```text
+http://localhost:8787/dashboard
+```
+
+The root URL `http://localhost:8787/` redirects to the dashboard.
+
+The dashboard is backed by the existing `GET /demo` and `POST /scenario` endpoints, so it does not duplicate the analysis engine or maintain a separate data model.
+
+It provides:
+
+- A household overview and current scenario.
+- Baseline confidence and observation window.
+- Deterministic severity and composite score.
+- Presence, timing, and sequence signal visualizations.
+- Explainable reasoning and evidence.
+- Recent normalized activity with source tags.
+- Caregiver feedback controls.
+- Scenario switching for the normal and deviation demos.
+- A clear indicator of whether the actual response came from Bedrock or the deterministic template fallback.
+
+This dashboard is presentation/demo infrastructure for the local development environment. It is not a public hosted website.
+
 ## Local development
 
 ### Requirements
@@ -163,13 +189,19 @@ npm run release:check
 npm run dev:server
 ```
 
-The local server listens on:
+Open:
 
 ```text
-http://localhost:8787
+http://localhost:8787/
 ```
 
-Useful routes:
+or directly:
+
+```text
+http://localhost:8787/dashboard
+```
+
+Useful API routes:
 
 - `GET /health`
 - `GET /demo`
@@ -202,7 +234,7 @@ These commands report verified configuration/connectivity status and do not fake
 
 ## Testing
 
-The final repository release includes a full automated test suite covering the deterministic engine, Ring integration boundaries, Bedrock reasoning contracts, persistence behavior, notifications, and runtime checks.
+The final repository release includes a full automated test suite covering the deterministic engine, Ring integration boundaries, Bedrock reasoning contracts, persistence behavior, notifications, runtime checks, and the dashboard presentation layer.
 
 The completed release line previously reached:
 
