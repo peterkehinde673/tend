@@ -86,7 +86,7 @@ The repository also includes a deterministic development simulator. It is explic
 
 **Important verification boundary:** the project has not claimed a successful live Ring API call from the development environment. The real Ring path is implemented and tested, while live connectivity depends on a supported Ring developer environment, credentials, and network access.
 
-For the Ring hackathon track, the official rules allow a Ring API, SDK, simulator, or device, and the demo must show the project working through a simulator or actual Ring device. urlAmazon/Ring hackathon requirementshttps://amazonappdev2026.devpost.com/rules
+The hackathon's Ring requirements state that a project may use Ring APIs, SDKs, simulators, or devices, and that the demo should show the Ring workflow working through a simulator or actual Ring device.
 
 ## Amazon Bedrock
 
