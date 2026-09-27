@@ -19,8 +19,9 @@ test('dashboard renders explainable signal and feedback sections', () => {
   assert.match(DASHBOARD_HTML, /data-feedback="expected"/);
 });
 
-test('dashboard is responsive and uses a browser-safe HTML response', () => {
+test('dashboard is responsive and returns browser-safe HTML', () => {
+  assert.match(DASHBOARD_HTML, /<!doctype html>/i);
+  assert.match(DASHBOARD_HTML, /<meta charset="utf-8">/i);
   assert.match(DASHBOARD_HTML, /viewport/);
   assert.match(DASHBOARD_HTML, /max-width: 720px/);
-  assert.match(DASHBOARD_HTML, /text\/html/);
 });
