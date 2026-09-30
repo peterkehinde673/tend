@@ -8,3 +8,6 @@ coverage/
 .DS_Store
 
 .aws-sam/
+
+# Local Ring webhook secret — never commit
+.ring-webhook-hmac-secret
