@@ -1,6 +1,6 @@
 # Tend AWS runtime deployment
 
-Phase 5 adds a small AWS-native deployment boundary around the existing Tend services.
+The final release adds a small AWS-native deployment boundary around the existing Tend services.
 
 ## What this provisions
 
@@ -73,4 +73,4 @@ The stack outputs `RingWebhookUrl` and `CaregiverFeedbackUrl` expose the two HTT
 
 ## Verification status
 
-This directory is **deployment wiring, not proof of a live AWS deployment**. Before claiming a live integration in a hackathon submission, run `sam validate`, `sam build`, deploy into an AWS account, confirm the SNS subscription if enabled, exercise the webhook and feedback route with valid signatures, confirm DynamoDB persistence, and confirm a scheduled invocation reaches the analysis worker.
+This directory is **deployment wiring, not proof of a live AWS deployment**. Before claiming a live integration outside the repository, run `sam validate`, `sam build`, deploy into an AWS account, confirm the SNS subscription if enabled, exercise the webhook and feedback route with valid signatures, confirm DynamoDB persistence, and confirm a scheduled invocation reaches the analysis worker.
