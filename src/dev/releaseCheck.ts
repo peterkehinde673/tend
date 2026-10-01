@@ -39,7 +39,7 @@ if (packageJson.scripts?.typecheck !== 'tsc -p tsconfig.json --noEmit') {
 
 requireText('.github/workflows/ci.yml', 'run: npm ci');
 requireText('.github/workflows/ci.yml', 'cache: npm');
-requireText('.github/workflows/ci.yml', 'phase-10-release-integration');
+requireText('.github/workflows/ci.yml', '- final-release');
 requireText('.github/workflows/ci.yml', 'sam validate --template-file infra/template.yaml --lint');
 
 requireText('infra/template.yaml', 'RingHouseholdId:');
