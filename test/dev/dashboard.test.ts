@@ -14,7 +14,7 @@ test('dashboard renders explainable signal and feedback sections', () => {
   assert.match(DASHBOARD_HTML, /Presence/);
   assert.match(DASHBOARD_HTML, /Timing/);
   assert.match(DASHBOARD_HTML, /Sequence/);
-  assert.match(DASHBOARD_HTML, /Explainable reasoning/);
+  assert.match(DASHBOARD_HTML, /Why this result\?/);
   assert.match(DASHBOARD_HTML, /Caregiver feedback/);
   assert.match(DASHBOARD_HTML, /data-feedback="expected"/);
 });
@@ -24,4 +24,8 @@ test('dashboard is responsive and returns browser-safe HTML', () => {
   assert.match(DASHBOARD_HTML, /<meta charset="utf-8">/i);
   assert.match(DASHBOARD_HTML, /viewport/);
   assert.match(DASHBOARD_HTML, /max-width: 720px/);
+  assert.match(DASHBOARD_HTML, /Activity is simulated, not live household data/);
+  assert.match(DASHBOARD_HTML, /Demo date/);
+  assert.match(DASHBOARD_HTML, /Explanation: built-in template/);
+  assert.match(DASHBOARD_HTML, /What contributed to the result\?/);
 });
