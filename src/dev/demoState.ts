@@ -91,6 +91,14 @@ export class DemoState {
     for (const event of historical) {
       await this.eventStore.append(event);
     }
+
+    // The first dashboard load must match the selected/default scenario.
+    // Without this, the UI could say "deviation_missing" while scoring an
+    // empty day and showing a normal result until the user clicks Run scenario.
+    const initialDay = this.simulator.generateDay(today, this.currentScenario);
+    for (const event of initialDay) {
+      await this.eventStore.append(event);
+    }
     this.seeded = true;
   }
 
