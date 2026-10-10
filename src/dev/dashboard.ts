@@ -411,6 +411,72 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       .events { min-width: 640px; }
       .events-wrap { overflow-x: auto; }
     }
+
+    /* Final-release visual refinement: calm, readable, mobile-first. */
+    :root {
+      --bg: #f5f6f3; --surface: #fff; --surface-muted: #f7f8f5;
+      --text: #202923; --muted: #66736a; --line: #e1e7e0;
+      --accent: #27745b; --accent-2: #69a58a; --good: #26724f;
+      --good-bg: #eaf5ed; --warn: #95651d; --warn-bg: #fbf2df;
+      --alert: #a8423c; --alert-bg: #f9ecea;
+      --shadow: 0 12px 32px rgba(25,43,32,.055); --radius: 18px;
+    }
+    body { background: var(--bg); letter-spacing: -.005em; }
+    .app { max-width: 1180px; padding: 30px 24px 42px; }
+    .topbar { margin-bottom: 24px; }
+    .logo { background: #244d3b; border-radius: 14px; box-shadow: none; }
+    .brand h1 { font-size: 25px; letter-spacing: -.04em; }
+    .select, .btn { border-radius: 10px; height: 44px; }
+    .btn { font-weight: 650; }
+    .btn:hover, .select:hover { transform: none; border-color: #aebdb2; }
+    .btn-primary, .btn-primary:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .hero { background: #eaf1eb; color: var(--text); border: 1px solid #dce7dd; box-shadow: none; padding: 28px; border-radius: 20px; margin-bottom: 20px; }
+    .hero .kicker { color: #617466 !important; }
+    .hero h2 { max-width: 760px; font-size: clamp(25px,3.2vw,34px); line-height: 1.16; }
+    .hero p { color: #5c6b60; }
+    .provider { background: #fff; color: #345b45; border: 1px solid #d7e3d8; letter-spacing: .025em; text-transform: none; white-space: normal; line-height: 1.4; }
+    .card { border-color: var(--line); box-shadow: 0 3px 14px rgba(25,43,32,.025); border-radius: 16px; }
+    .card-pad { padding: 20px; }
+    .kicker { letter-spacing: .075em; font-size: 10px; }
+    .metric { font-size: 30px; }
+    .metric-sub { line-height: 1.5; }
+    .score-ring { background: conic-gradient(var(--accent) calc(var(--score-pct) * 1%), #e6ece6 0); }
+    .bar { background: #edf1ed; }
+    .bar > span { background: var(--accent); }
+    .explanation { font-size: 17px; line-height: 1.6; }
+    .recommendation { background: #f1f5f0; border-color: #dce6dc; font-weight: 650; line-height: 1.45; }
+    .evidence-item { background: #fafbf9; border-radius: 11px; }
+    .events { font-size: 12px; }
+    .events th { letter-spacing: .055em; }
+    .source-tag { background: #edf4ef; color: #345d46; white-space: nowrap; }
+    .feedback .btn { min-height: 44px; }
+    .notice { font-size: 12px; line-height: 1.55; }
+    .footer { font-size: 12px; line-height: 1.6; }
+    @media (max-width: 720px) {
+      .app { padding: 16px 12px 28px; }
+      .topbar { gap: 14px; }
+      .toolbar { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+      .toolbar .select { grid-column: 1 / -1; width: 100%; }
+      .toolbar .btn { width: 100%; padding: 0 12px; }
+      .hero { padding: 20px 18px; border-radius: 16px; }
+      .hero-row { gap: 14px; }
+      .hero h2 { font-size: 25px; line-height: 1.2; }
+      .provider { align-self: flex-start; max-width: 100%; }
+      .grid { gap: 12px; }
+      .card-pad { padding: 16px; }
+      .metric { font-size: 28px; }
+      .score { align-items: flex-start; gap: 14px; }
+      .score-ring { width: 76px; height: 76px; padding: 7px; }
+      .score-ring-inner { font-size: 15px; }
+      .events { min-width: 0; table-layout: fixed; }
+      .events th, .events td { padding: 9px 6px; overflow-wrap: anywhere; }
+      .events th:nth-child(2), .events td:nth-child(2), .events th:nth-child(4), .events td:nth-child(4) { display: none; }
+      .events th:nth-child(1), .events td:nth-child(1) { width: 25%; }
+      .events th:nth-child(3), .events td:nth-child(3) { width: 75%; }
+      .feedback { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .feedback .btn { white-space: normal; height: auto; min-height: 44px; padding: 8px; }
+    }
+
   </style>
 </head>
 <body>
@@ -438,7 +504,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     <section class="hero">
       <div class="hero-row">
         <div>
-          <div class="kicker" style="color:rgba(255,255,255,.58)">Household overview</div>
+          <div class="kicker" style="color:#617466">Household overview · local demo</div>
           <h2 id="heroTitle">Today's activity is being compared with the household's learned routine.</h2>
           <p id="heroSub">Loading Tend's local development data…</p>
         </div>
@@ -451,7 +517,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
         <div class="card-pad">
           <div class="kicker">Baseline confidence</div>
           <p class="metric" id="confidence">—</p>
-          <p class="metric-sub" id="baselineMeta">—</p>
+          <p class="metric-sub" id="baselineMeta">How much history supports this baseline</p>
         </div>
       </article>
 
@@ -459,15 +525,15 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
         <div class="card-pad">
           <div class="kicker">Deviation severity</div>
           <div id="severity"></div>
-          <p class="metric-sub" id="severityMeta">—</p>
+          <p class="metric-sub" id="severityMeta">Confidence in this assessment</p>
         </div>
       </article>
 
       <article class="card span-3">
         <div class="card-pad">
-          <div class="kicker">Composite score</div>
+          <div class="kicker">Deviation score</div>
           <p class="metric" id="score">—</p>
-          <p class="metric-sub">Deterministic result</p>
+          <p class="metric-sub">Calculated by Tend's rules</p>
         </div>
       </article>
 
@@ -475,13 +541,13 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
         <div class="card-pad">
           <div class="kicker">Recent events</div>
           <p class="metric" id="eventCount">—</p>
-          <p class="metric-sub">Source-tagged normalized events</p>
+          <p class="metric-sub">Activity records used in the demo</p>
         </div>
       </article>
 
       <article class="card span-5">
         <div class="card-pad">
-          <div class="kicker">Deviation signals</div>
+          <div class="kicker">What contributed to the result?</div>
           <div class="score">
             <div class="score-ring" id="scoreRing" style="--score-pct:0">
               <div class="score-ring-inner" id="scoreRingValue">0</div>
@@ -512,13 +578,13 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
               </div>
             </div>
           </div>
-          <div class="notice">Severity is calculated before the reasoning layer. The language model cannot override this result.</div>
+          <div class="notice">Tend calculates the result first. The optional language model can explain it, but cannot change the score or severity.</div>
         </div>
       </article>
 
       <article class="card span-7">
         <div class="card-pad">
-          <div class="kicker">Explainable reasoning</div>
+          <div class="kicker">Why this result?</div>
           <p class="explanation" id="explanation">Loading explanation…</p>
           <div class="recommendation" id="recommendation">—</div>
           <div class="kicker" style="margin-top:18px">Evidence</div>
@@ -528,7 +594,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
 
       <article class="card span-7">
         <div class="card-pad">
-          <div class="kicker">Recent activity</div>
+          <div class="kicker">Recent activity (demo data)</div>
           <div class="events-wrap">
             <table class="events">
               <thead>
@@ -554,8 +620,8 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
             <button class="btn" data-feedback="not_useful">Not useful</button>
             <button class="btn" data-feedback="unusual">Unusual</button>
           </div>
-          <div class="notice">Feedback is applied to the current local demo household and is stored by signal sensitivity.</div>
-          <div class="kicker" style="margin-top:20px">Household</div>
+          <div class="notice">Your feedback is recorded in this local demo and can adjust signal sensitivity.</div>
+          <div class="kicker" style="margin-top:20px">Demo household</div>
           <div id="household" style="font-size:14px;font-weight:700">—</div>
           <div class="notice" id="updated">—</div>
         </div>
@@ -563,7 +629,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     </section>
 
     <div class="footer">
-      Tend local dashboard · Development simulator data unless a real provider is explicitly configured.
+      Tend · Local demonstration environment · Activity is simulated, not live household data.
     </div>
   </main>
 
@@ -624,12 +690,12 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
             : "Today's activity differs from the household's recent routine.";
 
         byId("heroSub").textContent =
-          "Scenario: " + String(data.scenario || "unknown") +
-          " · Evaluated " + String(data.todayIso || "").slice(0, 10) +
-          " · Household " + String(baseline.householdId || "unknown");
+          "Scenario: " + String(data.scenario || "unknown").replace(/_/g, " ") +
+          " · Demo date " + String(data.todayIso || "").slice(0, 10) +
+          " · Simulated household";
 
         byId("provider").textContent =
-          "Provider: " + String(data.reasoningProvider || "unknown");
+          (data.reasoningProvider === "bedrock" ? "Explanation: Amazon Bedrock" : "Explanation: built-in template");
 
         byId("confidence").textContent =
           Math.round(number(baseline.confidence) * 100) + "%";
@@ -682,12 +748,12 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
         byId("events").innerHTML = events.length
           ? events.slice(-12).reverse().map(function (event) {
               const zone = event.zoneId || event.deviceId || "—";
-              const eventType = [event.eventType, event.subType].filter(Boolean).join(" / ");
+              const eventType = [event.eventType, event.subType].filter(Boolean).join(" / ").replace(/_/g, " ");
               return "<tr>" +
                 "<td>" + escapeHtml(formatTime(event.occurredAt)) + "</td>" +
                 "<td>" + escapeHtml(zone) + "</td>" +
                 "<td>" + escapeHtml(eventType || "event") + "</td>" +
-                '<td><span class="source-tag">' + escapeHtml(event.source || "unknown") + "</span></td>" +
+                '<td><span class="source-tag">' + escapeHtml(event.source === "dev_simulator" ? "Demo simulator" : (event.source || "unknown").replace(/_/g, " ")) + "</span></td>" +
               "</tr>";
             }).join("")
           : '<tr><td colspan="4" class="empty">No events available.</td></tr>';
