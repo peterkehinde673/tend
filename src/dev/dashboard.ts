@@ -463,6 +463,15 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       .hero h2 { font-size: 25px; line-height: 1.2; }
       .provider { align-self: flex-start; max-width: 100%; }
       .grid { gap: 12px; }
+      /* Put the plain-English answer before the technical detail on phones. */
+      .grid > article:nth-child(6) { order: 0; }
+      .grid > article:nth-child(1),
+      .grid > article:nth-child(2),
+      .grid > article:nth-child(3),
+      .grid > article:nth-child(4) { order: 1; }
+      .grid > article:nth-child(5) { order: 2; }
+      .grid > article:nth-child(7) { order: 3; }
+      .grid > article:nth-child(8) { order: 4; }
       .card-pad { padding: 16px; }
       .metric { font-size: 28px; }
       .score { align-items: flex-start; gap: 14px; }
@@ -689,8 +698,14 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
             ? "Today's activity is consistent with the household's learned routine."
             : "Today's activity differs from the household's recent routine.";
 
+        const scenarioLabels = {
+          normal: "Normal routine",
+          deviation_missing: "Missing activity",
+          variable_normal: "Variable but normal",
+          sequence_deviation: "Changed activity sequence"
+        };
         byId("heroSub").textContent =
-          "Scenario: " + String(data.scenario || "unknown").replace(/_/g, " ") +
+          "Scenario: " + (scenarioLabels[data.scenario] || String(data.scenario || "unknown").replace(/_/g, " ")) +
           " · Demo date " + String(data.todayIso || "").slice(0, 10) +
           " · Simulated household";
 
